@@ -970,6 +970,7 @@ registry.list_all()
 | [Glossary](glossary.md) | Definitions of all abbreviations and terminology (SIP, RTP, PCM, μ-law, DTMF, VAD, etc.) |
 | [Media Guide](media-guide.md) | Deep dive into audio concepts — codecs, frames, sampling, transport, and why each design decision was made |
 | [Telephony Guide](telephony-guide.md) | Deep dive into telephony — ARI, Stasis, SIP trunks, channels, bridges, DTMF, and Asterisk configuration |
+| [Releasing](releasing.md) | How to publish a new version — version bumping, PEP 440 format, automated pipeline with approval gates |
 
 ---
 
