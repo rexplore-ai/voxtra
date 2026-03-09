@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "voxtra"
-version = "0.1.0b1"
+version = "0.1.0-beta"
 description = "Open voice infrastructure for AI agents — bridging telephony and AI"
 readme = "README.md"
 license = { text = "Apache-2.0" }
