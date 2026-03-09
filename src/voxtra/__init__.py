@@ -7,7 +7,7 @@ Voxtra bridges telephony infrastructure (Asterisk, FreeSWITCH, LiveKit)
 with AI voice agents (STT, LLM, TTS) through a developer-friendly Python API.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.0b1"
 
 from voxtra.app import VoxtraApp
 from voxtra.config import VoxtraConfig

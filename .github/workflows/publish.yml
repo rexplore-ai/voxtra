@@ -1,14 +1,57 @@
-name: Publish to PyPI
+name: Release & Publish
+
+# ──────────────────────────────────────────────────────────────
+# Automated release pipeline with human approval gates.
+#
+# Workflow:
+#   1. Push a version tag:  git tag v0.1.0b2 && git push origin v0.1.0b2
+#   2. CI runs lint + tests + builds the package        (automatic)
+#   3. 🔒 Human approves the "testpypi" environment     (manual)
+#   4. Package published to TestPyPI                     (automatic)
+#   5. Verify install from TestPyPI                      (automatic)
+#   6. 🔒 Human approves the "pypi" environment          (manual)
+#   7. Package published to PyPI                         (automatic)
+#   8. GitHub Release created with changelog             (automatic)
+# ──────────────────────────────────────────────────────────────
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "v*"
 
 permissions:
-  id-token: write
+  contents: write
 
 jobs:
+  # ── Step 1: Lint, test, build ────────────────────────────────
+  ci:
+    name: Lint · Test · Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint with ruff
+        run: ruff check src/ tests/
+
+      - name: Run tests
+        run: pytest --tb=short -q
+
   build:
+    name: Build package
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,8 +64,28 @@ jobs:
       - name: Install build tools
         run: python -m pip install --upgrade pip build
 
-      - name: Build package
+      - name: Build sdist and wheel
         run: python -m build
+
+      - name: Verify version matches tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          PKG_VERSION=$(python -c "import importlib.metadata; print(importlib.metadata.version('voxtra'))" 2>/dev/null || echo "")
+          TOML_VERSION=$(python -c "
+          try:
+              import tomllib
+          except ImportError:
+              import tomli as tomllib
+          with open('pyproject.toml', 'rb') as f:
+              print(tomllib.load(f)['project']['version'])
+          ")
+          echo "Git tag version: $TAG"
+          echo "pyproject.toml version: $TOML_VERSION"
+          if [ "$TAG" != "$TOML_VERSION" ]; then
+            echo "::error::Version mismatch! Tag is v$TAG but pyproject.toml has $TOML_VERSION"
+            exit 1
+          fi
+          echo "✅ Versions match: $TAG"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -30,14 +93,14 @@ jobs:
           name: dist
           path: dist/
 
+  # ── Step 2: Publish to TestPyPI (requires approval) ─────────
   publish-testpypi:
+    name: 🧪 Publish to TestPyPI
     needs: build
     runs-on: ubuntu-latest
     environment:
       name: testpypi
       url: https://test.pypi.org/p/voxtra
-    permissions:
-      id-token: write
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -49,15 +112,50 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          password: ${{ secrets.TEST_PYPI_TOKEN }}
 
-  publish-pypi:
+  # ── Step 3: Verify TestPyPI install ─────────────────────────
+  verify-testpypi:
+    name: ✅ Verify TestPyPI install
     needs: publish-testpypi
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Wait for TestPyPI index
+        run: sleep 30
+
+      - name: Install from TestPyPI
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          pip install \
+            --index-url https://test.pypi.org/simple/ \
+            --extra-index-url https://pypi.org/simple/ \
+            "voxtra==$TAG"
+
+      - name: Verify import and version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          INSTALLED=$(python -c "import voxtra; print(voxtra.__version__)")
+          echo "Installed version: $INSTALLED"
+          echo "Expected version:  $TAG"
+          if [ "$INSTALLED" != "$TAG" ]; then
+            echo "::error::Installed version $INSTALLED does not match tag v$TAG"
+            exit 1
+          fi
+          echo "✅ voxtra==$TAG installs and imports correctly from TestPyPI"
+
+  # ── Step 4: Publish to PyPI (requires approval) ─────────────
+  publish-pypi:
+    name: 🚀 Publish to PyPI
+    needs: verify-testpypi
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/p/voxtra
-    permissions:
-      id-token: write
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -67,3 +165,42 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
+
+  # ── Step 5: Create GitHub Release ───────────────────────────
+  github-release:
+    name: 📦 Create GitHub Release
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          # Extract section between this version header and the next version header
+          NOTES=$(awk "/^## \\[$TAG\\]/{found=1; next} /^## \\[/{if(found) exit} found" CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            NOTES="Release v$TAG — see [CHANGELOG.md](CHANGELOG.md) for details."
+          fi
+          # Write to file for the release body (handles multiline)
+          echo "$NOTES" > release_notes.md
+          echo "Generated release notes for v$TAG"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release_notes.md
+          files: dist/*
+          generate_release_notes: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'a') || contains(github.ref, 'b') || contains(github.ref, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
