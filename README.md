@@ -44,16 +44,22 @@ graph TD
 
 ### Installation
 
-**From GitHub (recommended — package not yet published to PyPI):**
+**From PyPI:**
 
 ```bash
-pip install git+https://github.com/rexplore-ai/voxtra.git
+pip install voxtra
 ```
 
 With provider extras:
 
 ```bash
-pip install "voxtra[asterisk,deepgram,openai,elevenlabs] @ git+https://github.com/rexplore-ai/voxtra.git"
+pip install voxtra[asterisk,deepgram,openai,elevenlabs]
+```
+
+**From GitHub (latest development version):**
+
+```bash
+pip install git+https://github.com/rexplore-ai/voxtra.git
 ```
 
 **From source (for development):**
@@ -63,12 +69,6 @@ git clone https://github.com/rexplore-ai/voxtra.git
 cd voxtra
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-```
-
-**From PyPI (coming soon):**
-
-```bash
-pip install voxtra
 ```
 
 ### Code-First Usage
