@@ -7,16 +7,19 @@ making it ideal for telephony AI applications.
 from __future__ import annotations
 
 import logging
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from voxtra.ai.stt.base import BaseSTT, TranscriptionResult
 from voxtra.config import STTConfig
 from voxtra.exceptions import STTError
 from voxtra.media.audio import AudioFrame
+from voxtra.registry import registry
 
 logger = logging.getLogger("voxtra.ai.stt.deepgram")
 
 
+@registry.register_stt("deepgram")
 class DeepgramSTT(BaseSTT):
     """Deepgram streaming Speech-to-Text provider.
 
@@ -42,7 +45,7 @@ class DeepgramSTT(BaseSTT):
     async def connect(self) -> None:
         """Initialize the Deepgram client and open a streaming connection."""
         try:
-            from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
+            from deepgram import DeepgramClient
         except ImportError:
             raise STTError(
                 "deepgram-sdk is required for DeepgramSTT. "
@@ -114,7 +117,7 @@ class DeepgramSTT(BaseSTT):
                 try:
                     result = await asyncio.wait_for(results_queue.get(), timeout=0.1)
                     yield result
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
 
         finally:

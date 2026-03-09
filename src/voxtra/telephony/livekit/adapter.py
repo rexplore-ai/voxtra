@@ -14,13 +14,14 @@ import logging
 from typing import Any
 
 from voxtra.config import LiveKitConfig
-from voxtra.events import VoxtraEvent
 from voxtra.exceptions import TelephonyError
+from voxtra.registry import registry
 from voxtra.telephony.base import BaseTelephonyAdapter, EventCallback
 
 logger = logging.getLogger("voxtra.telephony.livekit")
 
 
+@registry.register_telephony("livekit")
 class LiveKitAdapter(BaseTelephonyAdapter):
     """LiveKit SIP telephony adapter (Phase 2).
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from voxtra.types import AudioCodec
 
@@ -211,16 +211,16 @@ def _pcm_to_ulaw(data: bytes) -> bytes:
 
 def _linear_to_ulaw(sample: int) -> int:
     """Convert a single 16-bit PCM sample to μ-law."""
-    BIAS = 0x84
-    CLIP = 32635
+    bias = 0x84
+    clip = 32635
 
     sign = (sample >> 8) & 0x80
     if sign:
         sample = -sample
-    if sample > CLIP:
-        sample = CLIP
+    if sample > clip:
+        sample = clip
 
-    sample += BIAS
+    sample += bias
     exponent = 7
     mask = 0x4000
     while exponent > 0 and not (sample & mask):

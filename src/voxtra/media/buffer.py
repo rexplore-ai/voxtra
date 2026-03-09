@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from voxtra.media.audio import AudioFrame
 

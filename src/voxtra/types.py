@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
-from enum import Enum
-from typing import Any, Callable, Coroutine
+from collections.abc import Callable, Coroutine
+from enum import StrEnum
+from typing import Any
 
 # Type alias for async call handlers
 CallHandler = Callable[..., Coroutine[Any, Any, None]]
 
 
-class CallDirection(str, Enum):
+class CallDirection(StrEnum):
     """Direction of a phone call."""
 
     INBOUND = "inbound"
     OUTBOUND = "outbound"
 
 
-class CallState(str, Enum):
+class CallState(StrEnum):
     """State machine for a call's lifecycle."""
 
     RINGING = "ringing"
@@ -28,7 +29,7 @@ class CallState(str, Enum):
     FAILED = "failed"
 
 
-class AudioCodec(str, Enum):
+class AudioCodec(StrEnum):
     """Supported audio codecs."""
 
     ULAW = "ulaw"      # G.711 μ-law (North America)
@@ -37,7 +38,7 @@ class AudioCodec(str, Enum):
     OPUS = "opus"
 
 
-class MediaTransportType(str, Enum):
+class MediaTransportType(StrEnum):
     """Type of media transport."""
 
     WEBSOCKET = "websocket"
@@ -45,7 +46,7 @@ class MediaTransportType(str, Enum):
     LIVEKIT = "livekit"
 
 
-class ProviderType(str, Enum):
+class ProviderType(StrEnum):
     """Types of AI providers."""
 
     STT = "stt"

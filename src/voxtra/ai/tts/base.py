@@ -7,7 +7,8 @@ the streaming synthesis interface for low-latency audio output.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from voxtra.config import TTSConfig
 from voxtra.media.audio import AudioFrame

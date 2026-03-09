@@ -8,7 +8,8 @@ and event translation from the telephony domain to Voxtra events.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Coroutine
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from voxtra.events import VoxtraEvent
 

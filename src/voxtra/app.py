@@ -9,13 +9,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 from voxtra.config import VoxtraConfig
 from voxtra.events import CallStartedEvent, EventType, VoxtraEvent
 from voxtra.exceptions import ConfigurationError
 from voxtra.middleware import BaseMiddleware
+from voxtra.registry import registry
 from voxtra.router import CallHandler, Router
 from voxtra.session import CallSession
 from voxtra.types import CallDirection
@@ -157,15 +159,18 @@ class VoxtraApp:
         """Resolve telephony, media, and AI components from config.
 
         If components were injected directly, they take precedence.
-        Otherwise, we instantiate them based on the configuration.
+        Otherwise, we use the provider registry to instantiate them.
         """
+        # Ensure built-in providers are imported (triggers registration)
+        self._import_builtin_providers()
+
         # Telephony adapter
         if self._telephony is None:
-            self._telephony = await self._create_telephony_adapter()
+            self._telephony = self._create_telephony_adapter()
 
         # Media transport
         if self._media is None:
-            self._media = await self._create_media_transport()
+            self._media = self._create_media_transport()
 
         # AI providers
         if self._stt is None:
@@ -175,67 +180,67 @@ class VoxtraApp:
         if self._llm is None:
             self._llm = self._create_llm_provider()
 
-    async def _create_telephony_adapter(self) -> Any:
-        """Create a telephony adapter based on config."""
+    @staticmethod
+    def _import_builtin_providers() -> None:
+        """Import built-in provider modules so they register with the registry.
+
+        Each module decorates its class with @registry.register_*(),
+        which adds it to the global registry on import.
+        """
+        import importlib
+
+        modules = [
+            "voxtra.ai.stt.deepgram",
+            "voxtra.ai.tts.elevenlabs",
+            "voxtra.ai.llm.openai",
+            "voxtra.ai.vad.base",
+            "voxtra.telephony.asterisk.adapter",
+            "voxtra.telephony.livekit.adapter",
+            "voxtra.media.websocket",
+        ]
+        for mod in modules:
+            try:
+                importlib.import_module(mod)
+            except ImportError:
+                pass  # Optional dependency not installed
+
+    def _create_telephony_adapter(self) -> Any:
+        """Create a telephony adapter via the provider registry."""
         provider = self.config.telephony.provider
+        adapter_cls = registry.resolve_telephony(provider)
 
-        if provider == "asterisk":
-            from voxtra.telephony.asterisk.adapter import AsteriskARIAdapter
+        # Resolve the provider-specific config
+        config_map = {
+            "asterisk": self.config.telephony.asterisk,
+            "livekit": self.config.telephony.livekit,
+        }
+        config = config_map.get(provider)
+        if config is None:
+            raise ConfigurationError(
+                f"{provider.title()} config required when provider='{provider}'"
+            )
+        return adapter_cls(config=config)
 
-            if self.config.telephony.asterisk is None:
-                raise ConfigurationError("Asterisk config required when provider='asterisk'")
-            adapter = AsteriskARIAdapter(config=self.config.telephony.asterisk)
-            return adapter
-
-        elif provider == "livekit":
-            from voxtra.telephony.livekit.adapter import LiveKitAdapter
-
-            if self.config.telephony.livekit is None:
-                raise ConfigurationError("LiveKit config required when provider='livekit'")
-            adapter = LiveKitAdapter(config=self.config.telephony.livekit)
-            return adapter
-
-        raise ConfigurationError(f"Unknown telephony provider: {provider}")
-
-    async def _create_media_transport(self) -> Any:
-        """Create a media transport based on config."""
-        from voxtra.media.websocket import WebSocketMediaTransport
-
-        transport = WebSocketMediaTransport(config=self.config.media)
-        return transport
+    def _create_media_transport(self) -> Any:
+        """Create a media transport via the provider registry."""
+        transport_name = self.config.media.transport.value
+        transport_cls = registry.resolve_media(transport_name)
+        return transport_cls(config=self.config.media)
 
     def _create_stt_provider(self) -> Any:
-        """Create an STT provider based on config."""
-        provider = self.config.ai.stt.provider
-
-        if provider == "deepgram":
-            from voxtra.ai.stt.deepgram import DeepgramSTT
-
-            return DeepgramSTT(config=self.config.ai.stt)
-
-        raise ConfigurationError(f"Unknown STT provider: {provider}")
+        """Create an STT provider via the provider registry."""
+        stt_cls = registry.resolve_stt(self.config.ai.stt.provider)
+        return stt_cls(config=self.config.ai.stt)
 
     def _create_tts_provider(self) -> Any:
-        """Create a TTS provider based on config."""
-        provider = self.config.ai.tts.provider
-
-        if provider == "elevenlabs":
-            from voxtra.ai.tts.elevenlabs import ElevenLabsTTS
-
-            return ElevenLabsTTS(config=self.config.ai.tts)
-
-        raise ConfigurationError(f"Unknown TTS provider: {provider}")
+        """Create a TTS provider via the provider registry."""
+        tts_cls = registry.resolve_tts(self.config.ai.tts.provider)
+        return tts_cls(config=self.config.ai.tts)
 
     def _create_llm_provider(self) -> Any:
-        """Create an LLM agent based on config."""
-        provider = self.config.ai.llm.provider
-
-        if provider == "openai":
-            from voxtra.ai.llm.openai import OpenAIAgent
-
-            return OpenAIAgent(config=self.config.ai.llm)
-
-        raise ConfigurationError(f"Unknown LLM provider: {provider}")
+        """Create an LLM agent via the provider registry."""
+        llm_cls = registry.resolve_llm(self.config.ai.llm.provider)
+        return llm_cls(config=self.config.ai.llm)
 
     # ------------------------------------------------------------------
     # Session management

@@ -8,19 +8,21 @@ because it handles framing and timing automatically.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from voxtra.config import MediaConfig
 from voxtra.exceptions import MediaError
 from voxtra.media.audio import AudioFrame
 from voxtra.media.base import BaseMediaTransport
+from voxtra.registry import registry
 from voxtra.types import AudioCodec
 
 logger = logging.getLogger("voxtra.media.websocket")
 
 
+@registry.register_media("websocket")
 class WebSocketMediaTransport(BaseMediaTransport):
     """WebSocket-based media transport.
 

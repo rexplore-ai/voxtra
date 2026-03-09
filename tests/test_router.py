@@ -8,7 +8,6 @@ from voxtra.exceptions import RouteNotFoundError
 from voxtra.router import Route, Router
 from voxtra.session import CallSession
 
-
 # --- Route matching ---
 
 class TestRoute:

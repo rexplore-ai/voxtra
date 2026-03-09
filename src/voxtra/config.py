@@ -7,13 +7,12 @@ and YAML file-based configuration for declarative setup.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
 
 from voxtra.types import AudioCodec, MediaTransportType
-
 
 # ---------------------------------------------------------------------------
 # Telephony configuration
@@ -59,8 +58,8 @@ class TelephonyConfig(BaseModel):
     """Top-level telephony configuration."""
 
     provider: str = "asterisk"  # asterisk, freeswitch, livekit
-    asterisk: Optional[AsteriskConfig] = None
-    livekit: Optional[LiveKitConfig] = None
+    asterisk: AsteriskConfig | None = None
+    livekit: LiveKitConfig | None = None
     sip_trunks: list[SIPTrunkConfig] = Field(default_factory=list)
 
 

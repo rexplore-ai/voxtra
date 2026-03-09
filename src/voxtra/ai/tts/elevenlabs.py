@@ -7,16 +7,19 @@ suitable for real-time telephony applications.
 from __future__ import annotations
 
 import logging
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from voxtra.ai.tts.base import BaseTTS
 from voxtra.config import TTSConfig
 from voxtra.exceptions import TTSError
 from voxtra.media.audio import AudioFrame
+from voxtra.registry import registry
 
 logger = logging.getLogger("voxtra.ai.tts.elevenlabs")
 
 
+@registry.register_tts("elevenlabs")
 class ElevenLabsTTS(BaseTTS):
     """ElevenLabs streaming Text-to-Speech provider.
 

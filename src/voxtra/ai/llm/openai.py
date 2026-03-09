@@ -7,15 +7,18 @@ for low-latency voice AI applications.
 from __future__ import annotations
 
 import logging
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from voxtra.ai.llm.base import AgentResponse, BaseAgent
 from voxtra.config import LLMConfig
 from voxtra.exceptions import LLMError
+from voxtra.registry import registry
 
 logger = logging.getLogger("voxtra.ai.llm.openai")
 
 
+@registry.register_llm("openai")
 class OpenAIAgent(BaseAgent):
     """OpenAI-based LLM agent for voice conversations.
 

@@ -10,10 +10,10 @@ with AI voice agents (STT, LLM, TTS) through a developer-friendly Python API.
 __version__ = "0.1.0"
 
 from voxtra.app import VoxtraApp
-from voxtra.session import CallSession
-from voxtra.router import Router
-from voxtra.events import VoxtraEvent, EventType
 from voxtra.config import VoxtraConfig
+from voxtra.events import EventType, VoxtraEvent
+from voxtra.router import Router
+from voxtra.session import CallSession
 
 __all__ = [
     "VoxtraApp",

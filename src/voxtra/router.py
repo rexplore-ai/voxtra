@@ -8,8 +8,9 @@ by FastAPI's decorator-based routing pattern.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 from voxtra.exceptions import RouteNotFoundError
 

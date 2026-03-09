@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from voxtra.events import (
-    AgentResponseEvent,
     EventType,
-    UserTranscriptEvent,
     VoxtraEvent,
 )
 from voxtra.types import CallDirection, CallState
@@ -152,7 +151,7 @@ class CallSession:
             text = event.data.get("text", "")
             self._conversation_history.append({"role": "user", "content": text})
             return text
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("Session %s: listen timeout", self.id)
             return ""
 
@@ -172,7 +171,7 @@ class CallSession:
             try:
                 event = await asyncio.wait_for(self._event_queue.get(), timeout=1.0)
                 yield event
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
     async def transfer(self, target: str) -> None:

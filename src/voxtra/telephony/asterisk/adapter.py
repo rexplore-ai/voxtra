@@ -25,15 +25,16 @@ from voxtra.events import (
     CallEndedEvent,
     CallStartedEvent,
     DTMFEvent,
-    EventType,
     VoxtraEvent,
 )
 from voxtra.exceptions import TelephonyConnectionError, TelephonyError
+from voxtra.registry import registry
 from voxtra.telephony.base import BaseTelephonyAdapter, EventCallback
 
 logger = logging.getLogger("voxtra.telephony.asterisk")
 
 
+@registry.register_telephony("asterisk")
 class AsteriskARIAdapter(BaseTelephonyAdapter):
     """Asterisk ARI telephony adapter.
 
@@ -229,7 +230,7 @@ class AsteriskARIAdapter(BaseTelephonyAdapter):
         """
         # 1. Create a mixing bridge
         bridge_id = uuid4().hex[:12]
-        bridge_resp = await self._ari_post(
+        await self._ari_post(
             "/ari/bridges",
             params={
                 "type": "mixing",

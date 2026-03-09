@@ -7,7 +7,8 @@ between the telephony infrastructure and the Voxtra AI pipeline.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from voxtra.config import MediaConfig
 from voxtra.media.audio import AudioFrame

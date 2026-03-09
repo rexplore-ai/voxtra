@@ -7,15 +7,15 @@ and call handlers consume them.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     """All event types in the Voxtra system."""
 
     # Call lifecycle
@@ -68,7 +68,7 @@ class VoxtraEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid4().hex)
     type: EventType
     session_id: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     data: dict[str, Any] = Field(default_factory=dict)
 
     model_config = {"frozen": False}

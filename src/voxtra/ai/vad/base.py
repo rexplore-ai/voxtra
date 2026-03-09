@@ -7,16 +7,17 @@ starts and stops speaking, enabling turn-taking and barge-in.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel
 
 from voxtra.config import VADConfig
 from voxtra.media.audio import AudioFrame
+from voxtra.registry import registry
 
 
-class VADState(str, Enum):
+class VADState(StrEnum):
     """Current state of the voice activity detector."""
 
     SILENCE = "silence"
@@ -92,6 +93,7 @@ class BaseVAD(ABC):
         await self.reset()
 
 
+@registry.register_vad("energy")
 class EnergyVAD(BaseVAD):
     """Simple energy-based VAD implementation.
 

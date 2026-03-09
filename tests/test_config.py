@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -12,8 +11,6 @@ from voxtra.config import (
     AsteriskConfig,
     LLMConfig,
     MediaConfig,
-    STTConfig,
-    TTSConfig,
     TelephonyConfig,
     VoxtraConfig,
 )
