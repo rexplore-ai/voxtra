@@ -1,0 +1,51 @@
+app_name: basic-support-bot
+
+telephony:
+  provider: asterisk
+  asterisk:
+    base_url: http://localhost:8088
+    username: asterisk
+    password: secret
+    app_name: voxtra
+
+media:
+  transport: websocket
+  codec: ulaw
+  sample_rate: 8000
+  frame_duration_ms: 20
+
+ai:
+  stt:
+    provider: deepgram
+    api_key: ${DEEPGRAM_API_KEY}
+    model: nova-2
+    language: en
+    interim_results: true
+
+  llm:
+    provider: openai
+    api_key: ${OPENAI_API_KEY}
+    model: gpt-4o
+    temperature: 0.7
+    system_prompt: |
+      You are a friendly and professional customer support agent.
+      Keep your responses concise and conversational — you are
+      speaking on a phone call, not writing an essay.
+      Ask clarifying questions when needed.
+      If you cannot help, offer to transfer to a human agent.
+
+  tts:
+    provider: elevenlabs
+    api_key: ${ELEVENLABS_API_KEY}
+    voice_id: your-voice-id-here
+    model: eleven_turbo_v2_5
+    sample_rate: 8000
+
+  vad:
+    enabled: true
+    silence_threshold_ms: 600
+    speech_threshold_ms: 200
+
+routes:
+  - extension: "1000"
+    agent: support_agent

@@ -44,7 +44,7 @@ class SIPTrunkConfig(BaseModel):
     password: str = ""
     transport: str = "udp"  # udp, tcp, tls
     codec: AudioCodec = AudioCodec.ULAW
-    register: bool = True
+    do_register: bool = True
 
 
 class LiveKitConfig(BaseModel):
