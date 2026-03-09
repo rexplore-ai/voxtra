@@ -8,46 +8,36 @@
 
 Voxtra is a **4-layer Python framework** that bridges telephony infrastructure with AI voice agents. It follows a plugin architecture where every component — telephony backend, media transport, STT, TTS, LLM, VAD — is abstracted behind interfaces and can be swapped independently.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Developer Code                          │
-│                                                             │
-│   @app.route(extension="1000")                              │
-│   async def support(session: CallSession):                  │
-│       await session.say("Hello!")                           │
-│       text = await session.listen()                         │
-│       reply = await session.agent.respond(text)             │
-│       await session.say(reply.text)                         │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│   Layer 1 — CORE                                            │
-│   VoxtraApp · Router · CallSession · Events · Config        │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│   Layer 2 — AI PROVIDERS                                    │
-│   BaseSTT · BaseTTS · BaseAgent · BaseVAD                   │
-│   Deepgram · ElevenLabs · OpenAI · EnergyVAD               │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│   Layer 3 — MEDIA                                           │
-│   AudioFrame · BaseMediaTransport · AudioBuffer             │
-│   WebSocket transport · Codec conversion (μ-law/A-law/PCM)  │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│   Layer 4 — TELEPHONY                                       │
-│   BaseTelephonyAdapter                                      │
-│   AsteriskARI · LiveKit (stub) · FreeSWITCH (planned)       │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│   Infrastructure                                            │
-│   Asterisk PBX ← SIP Trunk ← Cellular Provider (Airtel…)   │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+block-beta
+    columns 1
+    block:dev["Developer Code"]
+        DEV["@app.route(extension='1000')\nasync def support(session):\n    await session.say('Hello!')"]
+    end
+    block:core["Layer 1 — CORE"]
+        CORE["VoxtraApp · Router · CallSession · Events · Config"]
+    end
+    block:ai["Layer 2 — AI PROVIDERS"]
+        AI["BaseSTT · BaseTTS · BaseAgent · BaseVAD\nDeepgram · ElevenLabs · OpenAI · EnergyVAD"]
+    end
+    block:media["Layer 3 — MEDIA"]
+        MEDIA["AudioFrame · BaseMediaTransport · AudioBuffer\nWebSocket transport · Codec conversion (μ-law / A-law / PCM)"]
+    end
+    block:tel["Layer 4 — TELEPHONY"]
+        TEL["BaseTelephonyAdapter\nAsteriskARI · LiveKit (stub) · FreeSWITCH (planned)"]
+    end
+    block:infra["Infrastructure"]
+        INFRA["Asterisk PBX ← SIP Trunk ← Cellular Provider (Airtel / TNM)"]
+    end
+
+    dev --> core --> ai --> media --> tel --> infra
+
+    style dev fill:#3498db,color:#fff
+    style core fill:#2ecc71,color:#fff
+    style ai fill:#9b59b6,color:#fff
+    style media fill:#e67e22,color:#fff
+    style tel fill:#e74c3c,color:#fff
+    style infra fill:#34495e,color:#fff
 ```
 
 ---
@@ -56,43 +46,29 @@ Voxtra is a **4-layer Python framework** that bridges telephony infrastructure w
 
 When a phone call arrives, this is exactly what happens inside Voxtra:
 
-```
-Phone call arrives at Asterisk
-         │
-         ▼
-1. Asterisk routes call to Stasis app (via dialplan)
-         │
-         ▼
-2. ARI WebSocket emits "StasisStart" event
-         │
-         ▼
-3. AsteriskARIAdapter translates → CallStartedEvent
-         │
-         ▼
-4. VoxtraApp._dispatch_event() receives the event
-         │
-         ▼
-5. Event passes through Middleware chain
-         │
-         ▼
-6. Router.resolve() finds the matching handler
-   (by extension, number, or dispatch rule)
-         │
-         ▼
-7. VoxtraApp creates a CallSession for this call
-         │
-         ▼
-8. Handler runs as an async task:
-   async def support(session):
-       await session.answer()     → ARI: answer channel
-       await session.say("Hi")    → TTS → Media → Asterisk
-       text = await session.listen() → Media → STT → text
-       reply = await session.agent.respond(text) → LLM
-       await session.say(reply.text) → TTS → Media → Asterisk
-       await session.hangup()     → ARI: hangup channel
-         │
-         ▼
-9. Session is destroyed, resources cleaned up
+```mermaid
+flowchart TD
+    A["📞 Phone call arrives at Asterisk"] --> B["1. Asterisk routes call to Stasis app\n(via dialplan)"]
+    B --> C["2. ARI WebSocket emits\nStasisStart event"]
+    C --> D["3. AsteriskARIAdapter translates\n→ CallStartedEvent"]
+    D --> E["4. VoxtraApp._dispatch_event()\nreceives the event"]
+    E --> F["5. Event passes through\nMiddleware chain"]
+    F --> G["6. Router.resolve() finds\nmatching handler"]
+    G --> H["7. VoxtraApp creates a\nCallSession for this call"]
+    H --> I["8. Handler runs as async task"]
+
+    I --> I1["session.answer()\n→ ARI: answer channel"]
+    I1 --> I2["session.say('Hello')\n→ TTS → Media → Asterisk"]
+    I2 --> I3["session.listen()\n→ Media → STT → text"]
+    I3 --> I4["session.agent.respond(text)\n→ LLM"]
+    I4 --> I5["session.say(reply.text)\n→ TTS → Media → Asterisk"]
+    I5 --> I6["session.hangup()\n→ ARI: hangup channel"]
+    I6 --> J["9. Session destroyed,\nresources cleaned up"]
+
+    style A fill:#4a90d9,stroke:#333,color:#fff
+    style H fill:#2ecc71,stroke:#333,color:#fff
+    style I fill:#e67e22,stroke:#333,color:#fff
+    style J fill:#95a5a6,stroke:#333,color:#fff
 ```
 
 ---
@@ -527,9 +503,15 @@ The universal audio container in Voxtra. All components communicate using `Audio
 
 Telephony uses μ-law (G.711) at 8kHz. AI providers typically need PCM or specific formats.
 
-```
-Asterisk → μ-law audio → AudioFrame.to_pcm_s16le() → STT
-TTS → PCM audio → convert_audio(pcm, to=ULAW) → Asterisk
+```mermaid
+flowchart LR
+    A1["Asterisk"] -->|μ-law audio| B1["AudioFrame\n.to_pcm_s16le()"] -->|PCM| C1["STT"]
+    A2["TTS"] -->|PCM audio| B2["convert_audio\n(pcm, to=ULAW)"] -->|μ-law| C2["Asterisk"]
+
+    style A1 fill:#e67e22,color:#fff
+    style C1 fill:#9b59b6,color:#fff
+    style A2 fill:#1abc9c,color:#fff
+    style C2 fill:#e67e22,color:#fff
 ```
 
 Supported conversions:
@@ -560,20 +542,26 @@ disconnect()         → Close the connection
 
 **WebSocket transport flow:**
 
-```
-Asterisk chan_websocket
-    ↓ (binary WebSocket messages)
-WebSocketMediaTransport.receive_audio()
-    → decode frame
-    → convert codec (μ-law → PCM)
-    → yield AudioFrame
-    
-TTS generates AudioFrame
-    → WebSocketMediaTransport.send_audio()
-    → convert codec (PCM → μ-law)
-    → send binary WebSocket message
-    ↓
-Asterisk chan_websocket → caller hears audio
+```mermaid
+flowchart TD
+    subgraph Inbound["Inbound: Caller → AI"]
+        direction TB
+        WS1["Asterisk chan_websocket"] -->|binary WS messages| R1["WebSocketMediaTransport\n.receive_audio()"]
+        R1 -->|decode frame| R2["Convert codec\nμ-law → PCM"]
+        R2 -->|yield| R3["AudioFrame"]
+    end
+
+    subgraph Outbound["Outbound: AI → Caller"]
+        direction TB
+        S1["TTS generates AudioFrame"] --> S2["WebSocketMediaTransport\n.send_audio()"]
+        S2 -->|convert| S3["PCM → μ-law"]
+        S3 -->|binary WS message| S4["Asterisk chan_websocket\n→ caller hears audio"]
+    end
+
+    style WS1 fill:#e67e22,color:#fff
+    style R3 fill:#2ecc71,color:#fff
+    style S1 fill:#1abc9c,color:#fff
+    style S4 fill:#e67e22,color:#fff
 ```
 
 ---
@@ -677,25 +665,31 @@ The `VoicePipeline` is the real-time engine that orchestrates the full AI voice 
 
 **Architecture:**
 
-```
-┌──────────────────────────────────────────────────────┐
-│                    VoicePipeline                      │
-│                                                      │
-│  ┌─────────────┐     ┌─────────────┐                 │
-│  │ Receive Loop │     │ Process Loop│                 │
-│  │             │     │             │                 │
-│  │ Media.recv()│     │ STT.stream()│                 │
-│  │    ↓        │     │    ↓        │                 │
-│  │ VAD.process │     │ LLM.respond │                 │
-│  │    ↓        │     │    ↓        │                 │
-│  │ AudioBuffer │────→│ TTS.synth() │                 │
-│  │             │     │    ↓        │                 │
-│  │             │     │ Media.send()│                 │
-│  └─────────────┘     └─────────────┘                 │
-│                                                      │
-│  Barge-in: if caller speaks while AI is talking,     │
-│  _interrupted=True → TTS playback stops immediately  │
-└──────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph ReceiveLoop["Receive Loop"]
+        direction TB
+        MR["Media.recv()"] --> VAD["VAD.process()"]
+        VAD --> BUF["AudioBuffer"]
+    end
+
+    subgraph ProcessLoop["Process Loop"]
+        direction TB
+        STT["STT.stream()"] --> LLM["LLM.respond()"]
+        LLM --> TTS["TTS.synth()"]
+        TTS --> MS["Media.send()"]
+    end
+
+    BUF -->|frames| STT
+    VAD -.->|"Barge-in:\nspeech during AI talk\n→ _interrupted=True\n→ TTS stops"| TTS
+
+    style MR fill:#4a90d9,color:#fff
+    style VAD fill:#e74c3c,color:#fff
+    style BUF fill:#e67e22,color:#fff
+    style STT fill:#9b59b6,color:#fff
+    style LLM fill:#e74c3c,color:#fff
+    style TTS fill:#1abc9c,color:#fff
+    style MS fill:#4a90d9,color:#fff
 ```
 
 **Two concurrent loops:**
@@ -732,21 +726,26 @@ The `voxtra` command-line interface provides quick operations:
 
 All Voxtra exceptions inherit from `VoxtraError`:
 
-```
-VoxtraError
-├── ConfigurationError
-├── TelephonyError
-│   └── TelephonyConnectionError
-├── CallError
-├── MediaError
-│   └── CodecError
-├── ProviderError
-│   ├── STTError
-│   ├── TTSError
-│   └── LLMError
-├── RouteNotFoundError
-├── SessionError
-└── PipelineError
+```mermaid
+flowchart TD
+    VE["VoxtraError"] --> CE["ConfigurationError"]
+    VE --> TE["TelephonyError"]
+    TE --> TCE["TelephonyConnectionError"]
+    VE --> CaE["CallError"]
+    VE --> ME["MediaError"]
+    ME --> CoE["CodecError"]
+    VE --> PE["ProviderError"]
+    PE --> STTE["STTError"]
+    PE --> TTSE["TTSError"]
+    PE --> LLME["LLMError"]
+    VE --> RNF["RouteNotFoundError"]
+    VE --> SE["SessionError"]
+    VE --> PiE["PipelineError"]
+
+    style VE fill:#e74c3c,color:#fff
+    style TE fill:#e67e22,color:#fff
+    style ME fill:#e67e22,color:#fff
+    style PE fill:#e67e22,color:#fff
 ```
 
 ---
@@ -794,75 +793,39 @@ Everything communicates via events. This enables middleware, logging, analytics,
 
 ### Inbound Call: Full Path
 
-```
-Cellular Network (Airtel/TNM)
-    │
-    │ SIP INVITE
-    ▼
-SIP Trunk Provider
-    │
-    │ SIP
-    ▼
-Asterisk PBX
-    │
-    │ Stasis(voxtra)
-    ▼
-AsteriskARIAdapter
-    │
-    │ CallStartedEvent
-    ▼
-VoxtraApp._dispatch_event()
-    │
-    │ Middleware chain
-    ▼
-Router.resolve() → handler function
-    │
-    ▼
-CallSession created
-    │
-    ├── session.answer() → ARI POST /channels/{id}/answer
-    │
-    ├── session.say("Hello")
-    │       │
-    │       ▼
-    │   ElevenLabsTTS.synthesize("Hello")
-    │       │ yields AudioFrame chunks
-    │       ▼
-    │   WebSocketMediaTransport.send_audio(frame)
-    │       │ converts PCM → μ-law
-    │       ▼
-    │   Asterisk plays audio to caller
-    │
-    ├── session.listen()
-    │       │
-    │       ▼
-    │   WebSocketMediaTransport.receive_audio()
-    │       │ caller speaks, μ-law frames arrive
-    │       │ converts μ-law → PCM
-    │       ▼
-    │   DeepgramSTT.transcribe_stream()
-    │       │ yields TranscriptionResult
-    │       ▼
-    │   UserTranscriptEvent pushed to session queue
-    │       │
-    │       ▼
-    │   session.listen() returns text
-    │
-    ├── session.agent.respond(text)
-    │       │
-    │       ▼
-    │   OpenAIAgent.respond(text)
-    │       │ sends chat completion request
-    │       ▼
-    │   Returns AgentResponse(text="...")
-    │
-    ├── session.say(reply.text)
-    │       │ (same TTS → Media flow as above)
-    │
-    └── session.hangup()
-            │
-            ▼
-        ARI DELETE /channels/{id}
+```mermaid
+flowchart TD
+    CN["📡 Cellular Network\n(Airtel / TNM)"] -->|SIP INVITE| STP["SIP Trunk Provider"]
+    STP -->|SIP| AST["📞 Asterisk PBX"]
+    AST -->|"Stasis(voxtra)"| ARI["AsteriskARIAdapter"]
+    ARI -->|CallStartedEvent| DISP["VoxtraApp._dispatch_event()"]
+    DISP -->|Middleware chain| ROUTER["Router.resolve()\n→ handler function"]
+    ROUTER --> SESSION["CallSession created"]
+
+    SESSION --> ANS["session.answer()\n→ ARI POST /channels/id/answer"]
+
+    ANS --> SAY1["session.say('Hello')"]
+    SAY1 --> TTS1["ElevenLabsTTS.synthesize()\nyields AudioFrame chunks"]
+    TTS1 --> MEDIA1["WebSocketMediaTransport.send_audio()\nconverts PCM → μ-law"]
+    MEDIA1 --> PLAY1["🔊 Asterisk plays audio to caller"]
+
+    PLAY1 --> LISTEN["session.listen()"]
+    LISTEN --> RECV["WebSocketMediaTransport.receive_audio()\ncaller speaks, μ-law → PCM"]
+    RECV --> STT["DeepgramSTT.transcribe_stream()\nyields TranscriptionResult"]
+    STT --> EVT["UserTranscriptEvent\n→ session.listen() returns text"]
+
+    EVT --> AGENT["session.agent.respond(text)\n→ OpenAIAgent.respond()"]
+    AGENT --> RESP["Returns AgentResponse"]
+    RESP --> SAY2["session.say(reply.text)\n→ TTS → Media → Asterisk"]
+    SAY2 --> HANG["session.hangup()\n→ ARI DELETE /channels/id"]
+
+    style CN fill:#4a90d9,color:#fff
+    style AST fill:#e67e22,color:#fff
+    style SESSION fill:#2ecc71,color:#fff
+    style TTS1 fill:#1abc9c,color:#fff
+    style STT fill:#9b59b6,color:#fff
+    style AGENT fill:#e74c3c,color:#fff
+    style HANG fill:#95a5a6,color:#fff
 ```
 
 ---
@@ -913,32 +876,49 @@ For production call centers with high concurrency:
 
 ## Future Architecture (Planned)
 
-```
-                    ┌──────────────┐
-                    │  Admin API   │
-                    │  Dashboard   │
-                    └──────┬───────┘
-                           │
-┌─────────────────────────────────────────────────┐
-│                  Voxtra Core                     │
-├──────────┬──────────┬──────────┬────────────────┤
-│ Asterisk │ LiveKit  │ FreeSWTCH│   Twilio       │
-│ Adapter  │ Adapter  │ Adapter  │   Adapter      │
-├──────────┴──────────┴──────────┴────────────────┤
-│              Media Transport Layer               │
-│         WebSocket · RTP · LiveKit Rooms          │
-├──────────┬──────────┬──────────┬────────────────┤
-│ Deepgram │ Whisper  │ Google   │   Azure        │
-│ STT      │ STT      │ STT     │   STT          │
-├──────────┼──────────┼──────────┼────────────────┤
-│ OpenAI   │ Claude   │ LangGraph│   Local LLM    │
-│ Agent    │ Agent    │ Agent    │   Agent        │
-├──────────┼──────────┼──────────┼────────────────┤
-│ ElevenLab│ Cartesia │ Google   │   Azure        │
-│ TTS      │ TTS      │ TTS     │   TTS          │
-├──────────┴──────────┴──────────┴────────────────┤
-│           Analytics · Recording · RAG            │
-└─────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    ADMIN["Admin API / Dashboard"] --> CORE["Voxtra Core"]
+
+    CORE --> TEL_LAYER
+    CORE --> MEDIA_LAYER
+    CORE --> STT_LAYER
+    CORE --> LLM_LAYER
+    CORE --> TTS_LAYER
+    CORE --> EXTRAS
+
+    subgraph TEL_LAYER["Telephony Adapters"]
+        T1["Asterisk"] ~~~ T2["LiveKit"] ~~~ T3["FreeSWITCH"] ~~~ T4["Twilio"]
+    end
+
+    subgraph MEDIA_LAYER["Media Transport Layer"]
+        M1["WebSocket"] ~~~ M2["RTP"] ~~~ M3["LiveKit Rooms"]
+    end
+
+    subgraph STT_LAYER["STT Providers"]
+        S1["Deepgram"] ~~~ S2["Whisper"] ~~~ S3["Google"] ~~~ S4["Azure"]
+    end
+
+    subgraph LLM_LAYER["LLM / Agent Providers"]
+        L1["OpenAI"] ~~~ L2["Claude"] ~~~ L3["LangGraph"] ~~~ L4["Local LLM"]
+    end
+
+    subgraph TTS_LAYER["TTS Providers"]
+        TT1["ElevenLabs"] ~~~ TT2["Cartesia"] ~~~ TT3["Google"] ~~~ TT4["Azure"]
+    end
+
+    subgraph EXTRAS["Extras"]
+        E1["Analytics"] ~~~ E2["Recording"] ~~~ E3["RAG"]
+    end
+
+    style ADMIN fill:#3498db,color:#fff
+    style CORE fill:#2ecc71,color:#fff
+    style TEL_LAYER fill:#e74c3c,color:#fff
+    style MEDIA_LAYER fill:#e67e22,color:#fff
+    style STT_LAYER fill:#9b59b6,color:#fff
+    style LLM_LAYER fill:#e74c3c,color:#fff
+    style TTS_LAYER fill:#1abc9c,color:#fff
+    style EXTRAS fill:#34495e,color:#fff
 ```
 
 ---
