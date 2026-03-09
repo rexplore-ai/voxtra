@@ -1,0 +1,70 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for Voxtra
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! We love hearing ideas from the community.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Motivation
+      description: What problem does this feature solve? Why do you need it?
+      placeholder: "I'm always frustrated when..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution you'd like.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative solutions or workarounds you've considered?
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which area of Voxtra would this affect?
+      options:
+        - Core (VoxtraApp, Router, Session)
+        - Telephony (new adapter or improvement)
+        - Media (transport, codecs)
+        - AI - STT (new provider)
+        - AI - TTS (new provider)
+        - AI - LLM (new provider)
+        - AI - VAD
+        - Pipeline
+        - CLI
+        - Configuration
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: willingness
+    attributes:
+      label: Would you be willing to contribute this?
+      options:
+        - "Yes, I'd like to submit a PR"
+        - "I can help but need guidance"
+        - "No, just suggesting"
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context, screenshots, or references?
