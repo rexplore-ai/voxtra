@@ -1,0 +1,60 @@
+app_name: sales-bot
+
+telephony:
+  provider: asterisk
+  asterisk:
+    base_url: http://localhost:8088
+    username: asterisk
+    password: secret
+    app_name: voxtra
+
+media:
+  transport: websocket
+  codec: ulaw
+  sample_rate: 8000
+  frame_duration_ms: 20
+
+ai:
+  stt:
+    provider: deepgram
+    api_key: ${DEEPGRAM_API_KEY}
+    model: nova-2
+    language: en
+    interim_results: true
+
+  llm:
+    provider: openai
+    api_key: ${OPENAI_API_KEY}
+    model: gpt-4o
+    temperature: 0.8
+    system_prompt: |
+      You are a friendly and persuasive outbound sales agent for Rexplore Labs.
+      You are calling potential customers to introduce Voxtra, an AI-powered
+      voice infrastructure platform.
+
+      Your goals:
+      - Build rapport quickly and sound natural, not scripted.
+      - Briefly explain how Voxtra helps businesses automate phone support
+        with conversational AI instead of rigid IVR menus.
+      - Qualify the lead: ask about their current call volume, existing
+        phone system, and biggest pain points.
+      - If interested, offer to schedule a demo or send more information.
+      - If not interested, thank them politely and end the call.
+      - Keep responses short — you are on a phone call.
+      - Never be pushy. Respect their time.
+
+  tts:
+    provider: elevenlabs
+    api_key: ${ELEVENLABS_API_KEY}
+    voice_id: your-voice-id-here
+    model: eleven_turbo_v2_5
+    sample_rate: 8000
+
+  vad:
+    enabled: true
+    silence_threshold_ms: 800
+    speech_threshold_ms: 200
+
+routes:
+  - extension: "2000"
+    agent: sales_agent
