@@ -44,14 +44,31 @@ graph TD
 
 ### Installation
 
+**From GitHub (recommended — package not yet published to PyPI):**
+
 ```bash
-pip install voxtra
+pip install git+https://github.com/rexplore-ai/voxtra.git
 ```
 
 With provider extras:
 
 ```bash
-pip install voxtra[asterisk,deepgram,openai,elevenlabs]
+pip install "voxtra[asterisk,deepgram,openai,elevenlabs] @ git+https://github.com/rexplore-ai/voxtra.git"
+```
+
+**From source (for development):**
+
+```bash
+git clone https://github.com/rexplore-ai/voxtra.git
+cd voxtra
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+**From PyPI (coming soon):**
+
+```bash
+pip install voxtra
 ```
 
 ### Code-First Usage
@@ -207,6 +224,18 @@ pytest
 - [ ] Multi-agent handoff
 - [ ] Dashboard / Admin API
 - [ ] Conversation analytics
+
+## Contributors
+
+Thanks to everyone who has contributed to Voxtra!
+
+<a href="https://github.com/byamasu-patrick">
+  <img src="https://github.com/byamasu-patrick.png" width="60" height="60" style="border-radius: 50%;" alt="Patrick Byamasu" />
+</a>
+
+**[Patrick Byamasu](https://github.com/byamasu-patrick)** — Creator & Lead Maintainer
+
+Want to contribute? Check out our [Contributing Guide](CONTRIBUTING.md).
 
 ## License
 
