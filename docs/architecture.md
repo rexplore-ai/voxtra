@@ -923,5 +923,55 @@ flowchart TD
 
 ---
 
+## Provider Registry (`src/voxtra/registry.py`)
+
+The provider registry enables a **plugin architecture** where providers self-register and can be resolved by name at runtime.
+
+**Registration (in provider modules):**
+
+```python
+from voxtra.registry import registry
+
+@registry.register_stt("deepgram")
+class DeepgramSTT(BaseSTT):
+    ...
+```
+
+**Resolution (in app.py):**
+
+```python
+stt_cls = registry.resolve_stt("deepgram")
+stt = stt_cls(config=stt_config)
+```
+
+**Third-party providers** can register without modifying Voxtra core:
+
+```python
+# In your package's __init__.py:
+from voxtra.registry import registry
+from my_package import WhisperSTT
+
+registry.register_stt("whisper")(WhisperSTT)
+```
+
+**Introspection:**
+
+```python
+registry.list_all()
+# {'stt': ['deepgram'], 'tts': ['elevenlabs'], 'llm': ['openai'], ...}
+```
+
+---
+
+## Further Reading
+
+| Document | Description |
+|----------|-------------|
+| [Glossary](glossary.md) | Definitions of all abbreviations and terminology (SIP, RTP, PCM, μ-law, DTMF, VAD, etc.) |
+| [Media Guide](media-guide.md) | Deep dive into audio concepts — codecs, frames, sampling, transport, and why each design decision was made |
+| [Telephony Guide](telephony-guide.md) | Deep dive into telephony — ARI, Stasis, SIP trunks, channels, bridges, DTMF, and Asterisk configuration |
+
+---
+
 **Voxtra** — *The LangGraph of AI Telephony*
 Built by Rexplore Research Labs
