@@ -14,7 +14,7 @@ If you discover a security vulnerability in Voxtra, please report it responsibly
 
 Instead, please report vulnerabilities by emailing:
 
-**security@rexploreresearchlabs.com**
+**security@rexplore.ai**
 
 Or use [GitHub's private vulnerability reporting](https://github.com/rexplore-ai/voxtra/security/advisories/new).
 
