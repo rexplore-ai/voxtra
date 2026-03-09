@@ -13,33 +13,33 @@ Developer pushes tag
         │
         ▼
 ┌─────────────────────┐
-│  Lint + Test         │  automatic
+│  Lint + Test        │  automatic
 │  (Python 3.11/3.12) │
 └────────┬────────────┘
          ▼
 ┌─────────────────────┐
-│  Build package       │  automatic
-│  + version check     │
+│  Build package      │  automatic
+│  + version check    │
 └────────┬────────────┘
          ▼
 ┌─────────────────────┐
-│  🔒 Approve          │  manual (testpypi environment)
-│  Publish to TestPyPI │
+│  🔒 Approve         │  manual (testpypi environment)
+│  Publish to TestPyPI│
 └────────┬────────────┘
          ▼
 ┌─────────────────────┐
-│  Verify install      │  automatic
-│  from TestPyPI       │
+│  Verify install     │  automatic
+│  from TestPyPI      │
 └────────┬────────────┘
          ▼
 ┌─────────────────────┐
-│  🔒 Approve          │  manual (pypi environment)
-│  Publish to PyPI     │
+│  🔒 Approve         │  manual (pypi environment)
+│  Publish to PyPI    │
 └────────┬────────────┘
          ▼
 ┌─────────────────────┐
-│  Create GitHub       │  automatic
-│  Release + assets    │
+│  Create GitHub      │  automatic
+│  Release + assets   │
 └─────────────────────┘
 ```
 
