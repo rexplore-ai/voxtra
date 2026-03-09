@@ -175,11 +175,17 @@ src/voxtra/
     └── vad/                # Voice Activity Detection
 ```
 
+## Documentation
+
+- **[Architecture](docs/architecture.md)** — Deep-dive into every layer, component, data flow, and design decision
+- **[Contributing](CONTRIBUTING.md)** — How to set up dev environment, add providers, submit PRs, and code standards
+
 ## Development
 
 ```bash
 git clone git@github.com:rexplore-ai/voxtra.git
 cd voxtra
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pytest
 ```
