@@ -6,10 +6,10 @@ name: Release & Publish
 # Workflow:
 #   1. Push a version tag:  git tag v0.1.0b2 && git push origin v0.1.0b2
 #   2. CI runs lint + tests + builds the package        (automatic)
-#   3. 🔒 Human approves the "testpypi" environment     (manual)
+#   3. Human approves the "testpypi" environment        (manual)
 #   4. Package published to TestPyPI                     (automatic)
 #   5. Verify install from TestPyPI                      (automatic)
-#   6. 🔒 Human approves the "pypi" environment          (manual)
+#   6. Human approves the "pypi" environment             (manual)
 #   7. Package published to PyPI                         (automatic)
 #   8. GitHub Release created with changelog             (automatic)
 # ──────────────────────────────────────────────────────────────
@@ -85,7 +85,7 @@ jobs:
             echo "::error::Version mismatch! Tag is v$TAG but pyproject.toml has $TOML_VERSION"
             exit 1
           fi
-          echo "✅ Versions match: $TAG"
+          echo "Versions match: $TAG"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -95,7 +95,7 @@ jobs:
 
   # ── Step 2: Publish to TestPyPI (requires approval) ─────────
   publish-testpypi:
-    name: 🧪 Publish to TestPyPI
+    name: Publish to TestPyPI
     needs: build
     runs-on: ubuntu-latest
     environment:
@@ -116,7 +116,7 @@ jobs:
 
   # ── Step 3: Verify TestPyPI install ─────────────────────────
   verify-testpypi:
-    name: ✅ Verify TestPyPI install
+    name: Verify TestPyPI install
     needs: publish-testpypi
     runs-on: ubuntu-latest
     steps:
@@ -146,11 +146,11 @@ jobs:
             echo "::error::Installed version $INSTALLED does not match tag v$TAG"
             exit 1
           fi
-          echo "✅ voxtra==$TAG installs and imports correctly from TestPyPI"
+          echo "voxtra==$TAG installs and imports correctly from TestPyPI"
 
   # ── Step 4: Publish to PyPI (requires approval) ─────────────
   publish-pypi:
-    name: 🚀 Publish to PyPI
+    name: Publish to PyPI
     needs: verify-testpypi
     runs-on: ubuntu-latest
     environment:
@@ -170,7 +170,7 @@ jobs:
 
   # ── Step 5: Create GitHub Release ───────────────────────────
   github-release:
-    name: 📦 Create GitHub Release
+    name: Create GitHub Release
     needs: publish-pypi
     runs-on: ubuntu-latest
     steps:
