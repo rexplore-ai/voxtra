@@ -11,16 +11,16 @@ Voxtra is a Python framework that bridges telephony infrastructure (Asterisk, Fr
 ## Architecture
 
 ```mermaid
-graph TD
-    A["📡 Cellular Provider (Airtel / TNM / etc.)"] -->|SIP Trunk| B["📞 Asterisk (PBX / Call Routing)"]
-    B -->|ARI + Media Stream| C["🔗 Voxtra (Voice AI Bridge)"]
-    C --> D["🎙️ STT — Deepgram"]
-    C --> E["🧠 LLM — OpenAI / Claude"]
-    C --> F["🔊 TTS — ElevenLabs"]
+graph LR
+    A[Cellular Provider] -->|SIP Trunk| B[Asterisk PBX]
+    B -->|ARI + Media| C[Voxtra]
+    C --> D[STT]
+    C --> E[LLM]
+    C --> F[TTS]
 
-    D -->|User transcript| E
-    E -->|Agent response| F
-    F -->|Audio| C
+    D -->|transcript| E
+    E -->|response| F
+    F -->|audio| C
 
     style A fill:#4a90d9,stroke:#333,color:#fff
     style B fill:#e67e22,stroke:#333,color:#fff
