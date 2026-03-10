@@ -4,7 +4,6 @@
 
 Built by [Rexplore Research Labs](https://github.com/rexplore-ai)
 
----
 
 Voxtra is a Python framework that bridges telephony infrastructure (Asterisk, FreeSWITCH, LiveKit) with AI voice agents (STT, LLM, TTS). It lets developers build AI-powered call centers without needing to understand telecom internals.
 
