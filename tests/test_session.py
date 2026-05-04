@@ -143,3 +143,195 @@ class TestCallSession:
         )
         await session.push_event(event)
         assert digits_received == ["3"]
+
+    @pytest.mark.asyncio
+    async def test_call_ended_dedupes_callbacks(self) -> None:
+        """Multiple CALL_ENDED events (e.g. ARI StasisEnd + AudioSocket
+        hangup for the same call) must fire hangup callbacks only once."""
+        session = _make_session()
+        call_count = 0
+
+        @session.on_hangup
+        async def on_end() -> None:
+            nonlocal call_count
+            call_count += 1
+
+        ev1 = VoxtraEvent(
+            type=EventType.CALL_ENDED,
+            session_id=session.id,
+            data={"source": "audiosocket"},
+        )
+        ev2 = VoxtraEvent(
+            type=EventType.CALL_ENDED,
+            session_id=session.id,
+            data={"source": "ari"},
+        )
+        await session.push_event(ev1)
+        await session.push_event(ev2)
+
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_audiosocket_hangup_propagates_to_session(self) -> None:
+        """When the AudioSocket connection's on_hangup fires, the session
+        must receive a CALL_ENDED event and run its hangup callbacks."""
+        session = _make_session()
+        called = []
+
+        @session.on_hangup
+        async def on_end() -> None:
+            called.append(True)
+
+        # Simulate what open_audio_socket() does: wire the session's
+        # _on_audiosocket_hangup as the connection's on_hangup callback.
+        await session._on_audiosocket_hangup()
+
+        assert called == [True]
+        # And subsequent CALL_ENDED from ARI should not double-fire.
+        await session.push_event(
+            VoxtraEvent(
+                type=EventType.CALL_ENDED,
+                session_id=session.id,
+                data={"source": "ari"},
+            )
+        )
+        assert called == [True]
+
+
+class _FakeTTS:
+    """Minimal TTS that yields one frame per word."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def synthesize(self, text: str):  # type: ignore[no-untyped-def]
+        from voxtra.media.audio import AudioFrame
+        from voxtra.types import AudioCodec
+        self.calls.append(text)
+        for word in text.split():
+            yield AudioFrame(data=word.encode(), codec=AudioCodec.PCM_S16LE)
+
+
+class _FakeMedia:
+    """Minimal media transport collecting frames sent via send_audio."""
+
+    def __init__(self) -> None:
+        self.sent: list[bytes] = []
+
+    async def send_audio(self, frame) -> None:  # type: ignore[no-untyped-def]
+        self.sent.append(frame.data)
+
+
+class _FakeLLM:
+    """Records user inputs and returns a canned response."""
+
+    def __init__(self, reply: str = "ok") -> None:
+        self.reply = reply
+        self.calls: list[tuple[str, list[dict[str, str]]]] = []
+
+    async def respond(  # type: ignore[no-untyped-def]
+        self, text, *, history=None, system_prompt=None
+    ):
+        from voxtra.ai.llm.base import AgentResponse
+        self.calls.append((text, list(history or [])))
+        return AgentResponse(text=self.reply)
+
+
+class TestSessionSayListenAgent:
+    @pytest.mark.asyncio
+    async def test_say_raises_without_pipeline(self) -> None:
+        session = _make_session()
+        with pytest.raises(RuntimeError, match="requires an AI pipeline"):
+            await session.say("hello")
+
+    @pytest.mark.asyncio
+    async def test_listen_raises_without_pipeline(self) -> None:
+        session = _make_session()
+        with pytest.raises(RuntimeError, match="requires an AI pipeline"):
+            await session.listen(timeout=0.05)
+
+    @pytest.mark.asyncio
+    async def test_agent_property_raises_without_pipeline(self) -> None:
+        session = _make_session()
+        with pytest.raises(RuntimeError, match="requires an AI pipeline"):
+            _ = session.agent
+
+    @pytest.mark.asyncio
+    async def test_say_streams_through_media(self) -> None:
+        session = _make_session()
+        # Inject a stub pipeline-like object with the bits say() touches.
+        tts = _FakeTTS()
+        media = _FakeMedia()
+
+        class _StubPipeline:
+            pass
+
+        stub = _StubPipeline()
+        stub.tts = tts  # type: ignore[attr-defined]
+        stub.media = media  # type: ignore[attr-defined]
+        session._pipeline = stub  # type: ignore[assignment]
+
+        await session.say("hello world")
+
+        assert tts.calls == ["hello world"]
+        assert media.sent == [b"hello", b"world"]
+
+    @pytest.mark.asyncio
+    async def test_listen_returns_user_transcript(self) -> None:
+        session = _make_session()
+        # Pipeline only needs to be non-None for listen().
+        session._pipeline = object()  # type: ignore[assignment]
+
+        # Push a non-transcript event first (to exercise filter), then the real one.
+        await session.push_event(
+            VoxtraEvent(
+                type=EventType.AGENT_THINKING,
+                session_id=session.id,
+                data={},
+            )
+        )
+        await session.push_event(
+            VoxtraEvent(
+                type=EventType.USER_TRANSCRIPT,
+                session_id=session.id,
+                data={"text": "hello voxtra"},
+            )
+        )
+
+        text = await asyncio.wait_for(session.listen(timeout=1.0), timeout=2.0)
+        assert text == "hello voxtra"
+
+    @pytest.mark.asyncio
+    async def test_listen_returns_empty_on_timeout(self) -> None:
+        session = _make_session()
+        session._pipeline = object()  # type: ignore[assignment]
+        text = await session.listen(timeout=0.05)
+        assert text == ""
+
+    @pytest.mark.asyncio
+    async def test_agent_respond_threads_history(self) -> None:
+        session = _make_session()
+        llm = _FakeLLM(reply="Sure!")
+
+        class _StubPipeline:
+            pass
+
+        stub = _StubPipeline()
+        stub.llm = llm  # type: ignore[attr-defined]
+        session._pipeline = stub  # type: ignore[assignment]
+
+        first = await session.agent.respond("Hi")
+        second = await session.agent.respond("And again")
+
+        assert first.text == "Sure!"
+        assert second.text == "Sure!"
+        # Second call's history should include the first user message AND
+        # the assistant's first reply.
+        _, history_at_second = llm.calls[1]
+        assert history_at_second == [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Sure!"},
+            {"role": "user", "content": "And again"},
+        ]
+        # Same agent client returned on each property access.
+        assert session.agent is session.agent

@@ -33,9 +33,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import struct
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 from voxtra.types import AudioChunk, AudioCodec
+
+HangupCallback = Callable[[], Awaitable[None]]
 
 logger = logging.getLogger("voxtra.audio.socket")
 
@@ -61,6 +63,7 @@ class AudioSocketConnection:
         writer: asyncio.StreamWriter,
         codec: AudioCodec = AudioCodec.ULAW,
         sample_rate: int = 8000,
+        on_hangup: HangupCallback | None = None,
     ) -> None:
         self._reader = reader
         self._writer = writer
@@ -69,6 +72,10 @@ class AudioSocketConnection:
         self.channel_uuid: str = ""
         self._closed = False
         self._sequence = 0
+        # Public so callers (e.g. CallSession) can attach a hangup callback
+        # after the connection has been accepted by the server.
+        self.on_hangup: HangupCallback | None = on_hangup
+        self._hangup_fired = False
 
     async def receive(self) -> AsyncIterator[AudioChunk]:
         """Receive audio chunks from Asterisk.
@@ -138,6 +145,21 @@ class AudioSocketConnection:
                 self._closed = True
                 break
 
+        # Loop exited — the media leg is gone. Notify any registered
+        # listener exactly once. Covers FRAME_HANGUP, FRAME_ERROR, EOF,
+        # and unexpected exceptions identically.
+        await self._fire_hangup()
+
+    async def _fire_hangup(self) -> None:
+        """Invoke the on_hangup callback at most once."""
+        if self._hangup_fired or self.on_hangup is None:
+            return
+        self._hangup_fired = True
+        try:
+            await self.on_hangup()
+        except Exception:
+            logger.exception("AudioSocket on_hangup callback error")
+
     async def send(self, chunk: AudioChunk) -> None:
         """Send an audio chunk to Asterisk (plays to caller).
 
@@ -175,6 +197,7 @@ class AudioSocketConnection:
             await self._writer.wait_closed()
         except Exception:
             pass
+        await self._fire_hangup()
 
     @property
     def is_closed(self) -> bool:

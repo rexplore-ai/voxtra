@@ -102,7 +102,7 @@ def _cmd_start(args: argparse.Namespace) -> None:
         if args.debug:
             config.server.debug = True
 
-        app = VoxtraApp(config=config)
+        app = VoxtraApp.from_config(config)
         print(f"Starting Voxtra '{config.app_name}' from {config_path}")
         app.run()
     except Exception as exc:

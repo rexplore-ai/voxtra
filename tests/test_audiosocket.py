@@ -111,6 +111,93 @@ class TestAudioSocketServer:
 
         await server.stop()
 
+    @pytest.mark.asyncio
+    async def test_on_hangup_fires_on_hangup_frame(self) -> None:
+        server = AudioSocketServer(host="127.0.0.1", port=0)
+        port = await server.start()
+
+        async def fake_asterisk() -> None:
+            _, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(bytes([FRAME_HANGUP]) + b"\x00\x00\x00")
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        asyncio.create_task(fake_asterisk())
+
+        conn = await server.accept(timeout=5.0)
+        fired = asyncio.Event()
+
+        async def on_hangup() -> None:
+            fired.set()
+
+        conn.on_hangup = on_hangup
+
+        async for _ in conn.receive():
+            pass
+
+        assert fired.is_set()
+        await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_on_hangup_fires_on_eof(self) -> None:
+        server = AudioSocketServer(host="127.0.0.1", port=0)
+        port = await server.start()
+
+        async def fake_asterisk() -> None:
+            # Connect and immediately drop — no hangup frame sent.
+            _, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.close()
+            await writer.wait_closed()
+
+        asyncio.create_task(fake_asterisk())
+
+        conn = await server.accept(timeout=5.0)
+        call_count = 0
+
+        async def on_hangup() -> None:
+            nonlocal call_count
+            call_count += 1
+
+        conn.on_hangup = on_hangup
+
+        async for _ in conn.receive():
+            pass
+
+        assert call_count == 1, "on_hangup must fire exactly once on EOF"
+        await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_on_hangup_fires_at_most_once(self) -> None:
+        server = AudioSocketServer(host="127.0.0.1", port=0)
+        port = await server.start()
+
+        async def fake_asterisk() -> None:
+            _, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(bytes([FRAME_HANGUP]) + b"\x00\x00\x00")
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        asyncio.create_task(fake_asterisk())
+
+        conn = await server.accept(timeout=5.0)
+        call_count = 0
+
+        async def on_hangup() -> None:
+            nonlocal call_count
+            call_count += 1
+
+        conn.on_hangup = on_hangup
+
+        async for _ in conn.receive():
+            pass
+        # Calling close() after the loop already fired must not double-fire.
+        await conn.close()
+
+        assert call_count == 1
+        await server.stop()
+
 
 class TestCodecConversion:
     def test_ulaw_to_pcm_length(self) -> None:

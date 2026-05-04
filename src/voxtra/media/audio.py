@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from voxtra.types import AudioCodec
+from voxtra.types import AudioChunk, AudioCodec
 
 
 class AudioFrame(BaseModel):
@@ -58,19 +58,51 @@ class AudioFrame(BaseModel):
         If the frame is already in PCM_S16LE format, returns self.
         Otherwise, performs codec conversion.
         """
-        if self.codec == AudioCodec.PCM_S16LE:
-            return self
+        return self.to_codec(AudioCodec.PCM_S16LE)
 
-        converted = convert_audio(
-            self.data,
-            from_codec=self.codec,
-            to_codec=AudioCodec.PCM_S16LE,
-        )
+    def to_codec(self, codec: AudioCodec) -> AudioFrame:
+        """Return a copy of this frame transcoded to ``codec``.
+
+        Returns ``self`` when no conversion is needed. Raises
+        :class:`CodecError` if the source/target pair is unsupported.
+        """
+        if self.codec == codec:
+            return self
+        converted = convert_audio(self.data, from_codec=self.codec, to_codec=codec)
         return AudioFrame(
             data=converted,
             sample_rate=self.sample_rate,
             channels=self.channels,
-            codec=AudioCodec.PCM_S16LE,
+            codec=codec,
+            timestamp_ms=self.timestamp_ms,
+            duration_ms=self.duration_ms,
+            sequence=self.sequence,
+        )
+
+    @classmethod
+    def from_chunk(cls, chunk: AudioChunk) -> AudioFrame:
+        """Build an :class:`AudioFrame` from an :class:`AudioChunk`.
+
+        Fields are copied 1:1 — no codec conversion. Use :meth:`to_codec`
+        on the result to transcode.
+        """
+        return cls(
+            data=chunk.data,
+            sample_rate=chunk.sample_rate,
+            channels=chunk.channels,
+            codec=chunk.codec,
+            timestamp_ms=chunk.timestamp_ms,
+            duration_ms=chunk.duration_ms,
+            sequence=chunk.sequence,
+        )
+
+    def to_chunk(self) -> AudioChunk:
+        """Build an :class:`AudioChunk` from this frame (no codec change)."""
+        return AudioChunk(
+            data=self.data,
+            sample_rate=self.sample_rate,
+            channels=self.channels,
+            codec=self.codec,
             timestamp_ms=self.timestamp_ms,
             duration_ms=self.duration_ms,
             sequence=self.sequence,

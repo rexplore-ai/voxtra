@@ -4,6 +4,7 @@ This package provides the interface between Voxtra and
 telephony infrastructure (Asterisk, FreeSWITCH, LiveKit).
 """
 
+from voxtra.telephony.asterisk import AsteriskAdapter, AsteriskARIAdapter
 from voxtra.telephony.base import BaseTelephonyAdapter
 
-__all__ = ["BaseTelephonyAdapter"]
+__all__ = ["BaseTelephonyAdapter", "AsteriskAdapter", "AsteriskARIAdapter"]

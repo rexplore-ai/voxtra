@@ -4,6 +4,6 @@ Connects to Asterisk via the Asterisk REST Interface (ARI)
 for call control, media bridging, and event handling.
 """
 
-from voxtra.telephony.asterisk.adapter import AsteriskARIAdapter
+from voxtra.telephony.asterisk.adapter import AsteriskAdapter, AsteriskARIAdapter
 
-__all__ = ["AsteriskARIAdapter"]
+__all__ = ["AsteriskAdapter", "AsteriskARIAdapter"]

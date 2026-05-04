@@ -28,8 +28,10 @@ from voxtra.events import (
 from voxtra.types import AudioChunk, CallDirection, CallState
 
 if TYPE_CHECKING:
+    from voxtra.ai.llm.base import AgentResponse, BaseAgent
     from voxtra.ari.client import ARIClient
     from voxtra.audio.socket import AudioSocketConnection, AudioSocketServer
+    from voxtra.core.pipeline import VoicePipeline
 
 logger = logging.getLogger("voxtra.session")
 
@@ -96,6 +98,14 @@ class CallSession:
         # Hangup callbacks
         self._on_hangup_callbacks: list[Any] = []
         self._on_dtmf_callbacks: list[Any] = []
+        self._hangup_dispatched = False
+
+        # Optional auto-wired AI pipeline (set by VoxtraApp when STT/LLM/TTS
+        # are configured). The pipeline runs as a background task tied to
+        # the session lifetime — see VoxtraApp._maybe_start_pipeline.
+        self._pipeline: VoicePipeline | None = None
+        self._pipeline_task: asyncio.Task[None] | None = None
+        self._agent_client: AgentClient | None = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -222,6 +232,74 @@ class CallSession:
         """Send raw audio bytes to the caller (convenience method)."""
         await self.send_audio(AudioChunk(data=data))
 
+    # ------------------------------------------------------------------
+    # High-level AI ergonomics (require an auto-wired VoicePipeline)
+    # ------------------------------------------------------------------
+
+    async def say(self, text: str) -> None:
+        """Synthesise ``text`` via TTS and play it to the caller.
+
+        Requires :class:`VoxtraApp` to have been constructed with stt/llm/tts
+        providers (see :meth:`VoxtraApp._maybe_start_pipeline`). Audio flows
+        through the pipeline's media transport so codec conversion and
+        AudioSocket lifecycle stay consistent with the rest of the call.
+        """
+        if self._pipeline is None:
+            raise RuntimeError(
+                "session.say() requires an AI pipeline; configure stt/llm/tts "
+                "on VoxtraApp or use VoxtraApp.from_yaml(...)"
+            )
+        async for frame in self._pipeline.tts.synthesize(text):
+            await self._pipeline.media.send_audio(frame)
+
+    async def listen(self, *, timeout: float = 10.0) -> str:
+        """Wait for the next final transcript from the pipeline's STT.
+
+        The auto-wired pipeline emits :class:`EventType.USER_TRANSCRIPT`
+        events back into this session's event queue; ``listen`` consumes
+        the queue until one arrives (or ``timeout`` elapses) and returns
+        the transcript text.
+
+        Returns an empty string on timeout.
+        """
+        if self._pipeline is None:
+            raise RuntimeError(
+                "session.listen() requires an AI pipeline; configure stt/llm/tts "
+                "on VoxtraApp or use VoxtraApp.from_yaml(...)"
+            )
+        deadline = asyncio.get_event_loop().time() + timeout
+        while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                return ""
+            try:
+                event = await asyncio.wait_for(
+                    self._event_queue.get(), timeout=remaining
+                )
+            except TimeoutError:
+                return ""
+            if event.type == EventType.USER_TRANSCRIPT:
+                return str(event.data.get("text", ""))
+
+    @property
+    def agent(self) -> AgentClient:
+        """Conversational agent wrapper for the pipeline's LLM.
+
+        Maintains a per-session conversation history so callers can do
+        multi-turn dialogue without manually threading messages::
+
+            reply = await session.agent.respond("Hello")
+            reply2 = await session.agent.respond("Tell me more")
+        """
+        if self._pipeline is None:
+            raise RuntimeError(
+                "session.agent requires an AI pipeline; configure stt/llm/tts "
+                "on VoxtraApp or use VoxtraApp.from_yaml(...)"
+            )
+        if self._agent_client is None:
+            self._agent_client = AgentClient(self._pipeline.llm)
+        return self._agent_client
+
     async def open_audio_socket(self) -> AudioSocketConnection:
         """Open an AudioSocket connection for bidirectional audio.
 
@@ -271,6 +349,10 @@ class CallSession:
 
         # Accept the incoming connection from Asterisk
         self._audio_conn = await self._audio_server.accept(timeout=10.0)
+        # If the AudioSocket connection drops (FRAME_HANGUP, EOF, error)
+        # before ARI emits StasisEnd, propagate as CALL_ENDED so the
+        # session and any registered hangup callbacks tear down cleanly.
+        self._audio_conn.on_hangup = self._on_audiosocket_hangup
 
         logger.info(
             "Session %s: audio socket connected (port=%d, bridge=%s)",
@@ -278,6 +360,16 @@ class CallSession:
         )
 
         return self._audio_conn
+
+    async def _on_audiosocket_hangup(self) -> None:
+        """Bridge AudioSocket disconnect into the session event queue."""
+        await self.push_event(
+            VoxtraEvent(
+                type=EventType.CALL_ENDED,
+                session_id=self.id,
+                data={"source": "audiosocket"},
+            )
+        )
 
     # ------------------------------------------------------------------
     # DTMF
@@ -454,11 +546,19 @@ class CallSession:
 
     async def push_event(self, event: VoxtraEvent) -> None:
         """Push an event into this session's queue (used by the framework)."""
+        # CALL_ENDED can arrive from multiple sources for the same call
+        # (ARI StasisEnd, ARI ChannelDestroyed, AudioSocket hangup). Only
+        # the first one should reach the queue and fire callbacks.
+        if event.type == EventType.CALL_ENDED and self._hangup_dispatched:
+            return
+
         await self._event_queue.put(event)
 
-        # Route DTMF events to the DTMF queue
+        # Route DTMF events to the DTMF queue. The digit may live on a
+        # typed attribute (DTMFEvent.digit) or in the data dict (legacy
+        # base VoxtraEvent path used by the ARI dispatcher).
         if event.type == EventType.DTMF_RECEIVED:
-            digit = event.data.get("digit", "")
+            digit = getattr(event, "digit", "") or event.data.get("digit", "")
             if digit:
                 await self._dtmf_queue.put(digit)
                 for cb in self._on_dtmf_callbacks:
@@ -469,6 +569,7 @@ class CallSession:
 
         # Fire hangup callbacks
         if event.type == EventType.CALL_ENDED:
+            self._hangup_dispatched = True
             for cb in self._on_hangup_callbacks:
                 try:
                     await cb()
@@ -488,6 +589,16 @@ class CallSession:
 
     async def _cleanup(self) -> None:
         """Release all resources associated with this session."""
+        # Cancel the auto-wired pipeline first so it stops pulling audio
+        # from a connection we're about to tear down.
+        if self._pipeline_task is not None and not self._pipeline_task.done():
+            self._pipeline_task.cancel()
+            try:
+                await self._pipeline_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._pipeline_task = None
+
         if self._recording_name is not None:
             try:
                 await self.record_stop()
@@ -508,3 +619,27 @@ class CallSession:
             except Exception:
                 pass
             self._bridge_id = None
+
+
+class AgentClient:
+    """Conversational wrapper around a :class:`BaseAgent`.
+
+    Maintains a per-session message history list so multi-turn dialogue
+    works without manual threading. Returned by :attr:`CallSession.agent`.
+    """
+
+    def __init__(self, llm: BaseAgent) -> None:
+        self._llm = llm
+        self.messages: list[dict[str, str]] = []
+
+    async def respond(self, text: str) -> AgentResponse:
+        """Append the user message, run the LLM, append + return the reply."""
+        self.messages.append({"role": "user", "content": text})
+        response = await self._llm.respond(text, history=list(self.messages))
+        if response.text:
+            self.messages.append({"role": "assistant", "content": response.text})
+        return response
+
+    def reset(self) -> None:
+        """Clear the conversation history."""
+        self.messages.clear()
