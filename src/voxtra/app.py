@@ -1,81 +1,119 @@
 """VoxtraApp — the main entry point for a Voxtra application.
 
-VoxtraApp wires together telephony, media, AI providers, and routing
-into a single cohesive application that developers interact with.
+VoxtraApp is the central object developers use to build telephony AI
+applications. It manages the ARI connection, listens for calls, and
+dispatches them to user-defined handlers.
+
+Design goals:
+    1. Minimal boilerplate — 10 lines to a working call handler.
+    2. Asterisk-native — built directly on ARI, not abstracted away.
+    3. AudioSocket-first — clean TCP audio I/O, no RTP complexity.
+    4. SaaS-ready — tenant isolation via ARI app namespacing.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 from collections.abc import Callable, Coroutine
-from pathlib import Path
 from typing import Any
 
-from voxtra.config import VoxtraConfig
-from voxtra.events import CallStartedEvent, EventType, VoxtraEvent
-from voxtra.exceptions import ConfigurationError
-from voxtra.middleware import BaseMiddleware
-from voxtra.registry import registry
-from voxtra.router import CallHandler, Router
+from voxtra.ari.client import ARIClient
+from voxtra.ari.events import ARIEvent
+from voxtra.events import (
+    CallEndedEvent,
+    CallStartedEvent,
+    DTMFEvent,
+    EventType,
+    VoxtraEvent,
+)
 from voxtra.session import CallSession
 from voxtra.types import CallDirection
 
 logger = logging.getLogger("voxtra")
 
+# Type alias for the user's call handler
+OnCallHandler = Callable[[CallSession], Coroutine[Any, Any, None]]
+
 
 class VoxtraApp:
     """The main Voxtra application.
 
-    Typical usage::
+    Minimal usage — 10 lines to a working AI call handler::
 
         from voxtra import VoxtraApp
 
-        app = VoxtraApp.from_yaml("voxtra.yaml")
+        app = VoxtraApp(
+            ari_url="http://pbx.example.com:8088",
+            ari_user="asterisk",
+            ari_password="secret",
+        )
 
-        @app.route(extension="1000")
-        async def support(session):
-            await session.say("Hello!")
+        @app.on_call
+        async def handle(call):
+            await call.answer()
+            await call.play_file("hello-world")
+            await call.hangup()
 
         app.run()
 
-    Or programmatically::
+    With routing::
 
-        from voxtra import VoxtraApp
-        from voxtra.config import VoxtraConfig, AsteriskConfig, TelephonyConfig
+        @app.on_call(extension="1000")
+        async def support(call):
+            await call.answer()
+            await call.play_file("support-greeting")
 
-        config = VoxtraConfig(
-            telephony=TelephonyConfig(
-                provider="asterisk",
-                asterisk=AsteriskConfig(base_url="http://localhost:8088"),
-            ),
+        @app.on_call(extension="2000")
+        async def sales(call):
+            await call.answer()
+            await call.play_file("sales-greeting")
+
+    SaaS multi-tenant (ARI app namespacing)::
+
+        app = VoxtraApp(
+            ari_url="http://pbx:8088",
+            ari_user="asterisk",
+            ari_password="secret",
+            app_name="tenant-acme",     # Isolates Stasis events
         )
-        app = VoxtraApp(config=config)
+
+    Originate outbound calls::
+
+        call = await app.originate(
+            endpoint="PJSIP/+265999123456@carrier",
+            caller_id="+265888000001",
+        )
     """
 
     def __init__(
         self,
-        config: VoxtraConfig | None = None,
+        ari_url: str = "",
+        ari_user: str = "",
+        ari_password: str = "",
         *,
-        telephony: Any | None = None,
-        media: Any | None = None,
-        stt: Any | None = None,
-        tts: Any | None = None,
-        llm: Any | None = None,
+        app_name: str = "voxtra",
+        reconnect_interval: float = 5.0,
+        debug: bool = False,
     ) -> None:
-        self.config = config or VoxtraConfig()
-        self.router = Router()
-        self._middlewares: list[BaseMiddleware] = []
+        # ARI connection parameters (support env vars as fallback)
+        self.ari_url = ari_url or os.environ.get("VOXTRA_ARI_URL", "http://localhost:8088")
+        self.ari_user = ari_user or os.environ.get("VOXTRA_ARI_USER", "asterisk")
+        self.ari_password = ari_password or os.environ.get("VOXTRA_ARI_PASSWORD", "")
+        self.app_name = app_name
+        self.debug = debug
 
-        # Components can be injected directly or resolved from config later
-        self._telephony = telephony
-        self._media = media
-        self._stt = stt
-        self._tts = tts
-        self._llm = llm
+        # ARI client (created on connect)
+        self._ari: ARIClient | None = None
+        self._reconnect_interval = reconnect_interval
 
-        # Active sessions keyed by session ID
+        # Call handlers — keyed by extension pattern, None = default
+        self._handlers: dict[str | None, OnCallHandler] = {}
+        self._default_handler: OnCallHandler | None = None
+
+        # Active sessions keyed by channel ID
         self._sessions: dict[str, CallSession] = {}
 
         # Lifecycle hooks
@@ -85,276 +123,295 @@ class VoxtraApp:
         self._running = False
 
     # ------------------------------------------------------------------
-    # Factory methods
+    # Decorator API
     # ------------------------------------------------------------------
 
-    @classmethod
-    def from_yaml(cls, path: str | Path) -> VoxtraApp:
-        """Create a VoxtraApp from a YAML configuration file."""
-        config = VoxtraConfig.from_yaml(path)
-        return cls(config=config)
-
-    # ------------------------------------------------------------------
-    # Decorator API (delegates to internal Router)
-    # ------------------------------------------------------------------
-
-    def route(
+    def on_call(
         self,
+        func: OnCallHandler | None = None,
         *,
         extension: str | None = None,
         number: str | None = None,
-        name: str = "",
-        metadata: dict[str, Any] | None = None,
-    ) -> Callable[[CallHandler], CallHandler]:
-        """Decorator to register a call handler.
+    ) -> Any:
+        """Register a call handler.
 
-        Args:
-            extension: Asterisk extension to match.
-            number: Phone number to match.
-            name: Human-readable name for the route.
-            metadata: Arbitrary metadata for the route.
+        Can be used as a plain decorator or with arguments::
 
-        Example::
+            # Default handler (all calls)
+            @app.on_call
+            async def handle(call): ...
 
-            @app.route(extension="1000")
-            async def handle_support(session: CallSession):
-                await session.say("Hello!")
+            # Extension-specific
+            @app.on_call(extension="1000")
+            async def support(call): ...
+
+            # Number-specific
+            @app.on_call(number="+265999123456")
+            async def specific_did(call): ...
         """
-        return self.router.route(
-            extension=extension,
-            number=number,
-            name=name,
-            metadata=metadata,
-        )
+        def decorator(handler: OnCallHandler) -> OnCallHandler:
+            if extension is not None:
+                self._handlers[extension] = handler
+            elif number is not None:
+                self._handlers[f"num:{number}"] = handler
+            else:
+                self._default_handler = handler
+            return handler
 
-    def default_route(self) -> Callable[[CallHandler], CallHandler]:
-        """Decorator to register a default fallback handler."""
-        return self.router.default()
-
-    # ------------------------------------------------------------------
-    # Middleware
-    # ------------------------------------------------------------------
-
-    def add_middleware(self, middleware: BaseMiddleware) -> None:
-        """Add a middleware to the event processing pipeline."""
-        self._middlewares.append(middleware)
+        # Support both @app.on_call and @app.on_call(extension="1000")
+        if func is not None:
+            return decorator(func)
+        return decorator
 
     # ------------------------------------------------------------------
     # Lifecycle hooks
     # ------------------------------------------------------------------
 
-    def on_startup(self, func: Callable[[], Coroutine[Any, Any, None]]) -> None:
+    def on_startup(self, func: Callable[[], Coroutine[Any, Any, None]]) -> Callable:
         """Register an async function to run on application startup."""
         self._on_startup.append(func)
+        return func
 
-    def on_shutdown(self, func: Callable[[], Coroutine[Any, Any, None]]) -> None:
+    def on_shutdown(self, func: Callable[[], Coroutine[Any, Any, None]]) -> Callable:
         """Register an async function to run on application shutdown."""
         self._on_shutdown.append(func)
+        return func
 
     # ------------------------------------------------------------------
-    # Component resolution
+    # Outbound calling
     # ------------------------------------------------------------------
 
-    async def _resolve_components(self) -> None:
-        """Resolve telephony, media, and AI components from config.
+    async def originate(
+        self,
+        endpoint: str,
+        *,
+        caller_id: str = "",
+        timeout: int = 30,
+        variables: dict[str, str] | None = None,
+    ) -> CallSession:
+        """Originate an outbound call.
 
-        If components were injected directly, they take precedence.
-        Otherwise, we use the provider registry to instantiate them.
+        Args:
+            endpoint: SIP endpoint, e.g. "PJSIP/+265999123456@carrier".
+            caller_id: Caller ID to present.
+            timeout: Ring timeout in seconds.
+            variables: Channel variables to set.
+
+        Returns:
+            A CallSession for the new outbound call.
         """
-        # Ensure built-in providers are imported (triggers registration)
-        self._import_builtin_providers()
+        if self._ari is None:
+            raise RuntimeError("Not connected. Call start() or run() first.")
 
-        # Telephony adapter
-        if self._telephony is None:
-            self._telephony = self._create_telephony_adapter()
+        channel = await self._ari.originate(
+            endpoint,
+            caller_id=caller_id,
+            timeout=timeout,
+            variables=variables,
+        )
 
-        # Media transport
-        if self._media is None:
-            self._media = self._create_media_transport()
+        session = CallSession(
+            channel_id=channel.id,
+            caller_id=caller_id,
+            called_number=endpoint,
+            direction=CallDirection.OUTBOUND,
+            ari=self._ari,
+            app_name=self.app_name,
+        )
+        self._sessions[session.id] = session
 
-        # AI providers
-        if self._stt is None:
-            self._stt = self._create_stt_provider()
-        if self._tts is None:
-            self._tts = self._create_tts_provider()
-        if self._llm is None:
-            self._llm = self._create_llm_provider()
+        logger.info(
+            "Originated call to %s (channel=%s)",
+            endpoint, channel.id,
+        )
 
-    @staticmethod
-    def _import_builtin_providers() -> None:
-        """Import built-in provider modules so they register with the registry.
-
-        Each module decorates its class with @registry.register_*(),
-        which adds it to the global registry on import.
-        """
-        import importlib
-
-        modules = [
-            "voxtra.ai.stt.deepgram",
-            "voxtra.ai.tts.elevenlabs",
-            "voxtra.ai.llm.openai",
-            "voxtra.ai.vad.base",
-            "voxtra.telephony.asterisk.adapter",
-            "voxtra.telephony.livekit.adapter",
-            "voxtra.media.websocket",
-        ]
-        for mod in modules:
-            try:
-                importlib.import_module(mod)
-            except ImportError:
-                pass  # Optional dependency not installed
-
-    def _create_telephony_adapter(self) -> Any:
-        """Create a telephony adapter via the provider registry."""
-        provider = self.config.telephony.provider
-        adapter_cls = registry.resolve_telephony(provider)
-
-        # Resolve the provider-specific config
-        config_map = {
-            "asterisk": self.config.telephony.asterisk,
-            "livekit": self.config.telephony.livekit,
-        }
-        config = config_map.get(provider)
-        if config is None:
-            raise ConfigurationError(
-                f"{provider.title()} config required when provider='{provider}'"
-            )
-        return adapter_cls(config=config)
-
-    def _create_media_transport(self) -> Any:
-        """Create a media transport via the provider registry."""
-        transport_name = self.config.media.transport.value
-        transport_cls = registry.resolve_media(transport_name)
-        return transport_cls(config=self.config.media)
-
-    def _create_stt_provider(self) -> Any:
-        """Create an STT provider via the provider registry."""
-        stt_cls = registry.resolve_stt(self.config.ai.stt.provider)
-        return stt_cls(config=self.config.ai.stt)
-
-    def _create_tts_provider(self) -> Any:
-        """Create a TTS provider via the provider registry."""
-        tts_cls = registry.resolve_tts(self.config.ai.tts.provider)
-        return tts_cls(config=self.config.ai.tts)
-
-    def _create_llm_provider(self) -> Any:
-        """Create an LLM agent via the provider registry."""
-        llm_cls = registry.resolve_llm(self.config.ai.llm.provider)
-        return llm_cls(config=self.config.ai.llm)
+        return session
 
     # ------------------------------------------------------------------
     # Session management
     # ------------------------------------------------------------------
 
-    async def _create_session(self, event: CallStartedEvent) -> CallSession:
-        """Create a new CallSession for an incoming call."""
-        session = CallSession(
-            session_id=event.session_id,
-            caller_id=event.caller_id,
-            callee_id=event.callee_id,
-            direction=CallDirection(event.direction),
-            telephony=self._telephony,
-            media=self._media,
-            stt=self._stt,
-            tts=self._tts,
-            agent=self._llm,
-            channel_id=event.data.get("channel_id", ""),
-        )
-        self._sessions[session.id] = session
-        logger.info(
-            "Created session %s (caller=%s, callee=%s)",
-            session.id,
-            session.caller_id,
-            session.callee_id,
-        )
-        return session
-
     def get_session(self, session_id: str) -> CallSession | None:
         """Retrieve an active session by ID."""
         return self._sessions.get(session_id)
 
-    async def _destroy_session(self, session_id: str) -> None:
-        """Clean up a completed session."""
-        session = self._sessions.pop(session_id, None)
-        if session:
-            logger.info("Destroyed session %s", session_id)
+    @property
+    def active_sessions(self) -> dict[str, CallSession]:
+        """Return all currently active call sessions."""
+        return dict(self._sessions)
 
     # ------------------------------------------------------------------
-    # Event dispatch
+    # ARI event handling
     # ------------------------------------------------------------------
 
-    async def _dispatch_event(self, event: VoxtraEvent) -> None:
-        """Dispatch an event through middleware, then to the appropriate handler."""
+    def _resolve_handler(self, called_number: str, caller_id: str) -> OnCallHandler | None:
+        """Find the best handler for an incoming call."""
+        # 1. Exact extension match
+        if called_number in self._handlers:
+            return self._handlers[called_number]
 
-        async def final_handler(evt: VoxtraEvent) -> VoxtraEvent | None:
-            await self._handle_event(evt)
-            return evt
+        # 2. Number match
+        num_key = f"num:{caller_id}"
+        if num_key in self._handlers:
+            return self._handlers[num_key]
 
-        # Build middleware chain (outermost first)
-        handler = final_handler
-        for mw in reversed(self._middlewares):
+        # 3. Default handler
+        return self._default_handler
 
-            async def make_next(
-                m: BaseMiddleware, nxt: Any
-            ) -> Callable[..., Coroutine[Any, Any, VoxtraEvent | None]]:
-                async def wrapped(e: VoxtraEvent) -> VoxtraEvent | None:
-                    return await m.process(e, nxt)
+    async def _handle_ari_event(self, event: ARIEvent) -> None:
+        """Translate an ARI event and dispatch it."""
+        if event.type == "StasisStart":
+            await self._on_stasis_start(event)
 
-                return wrapped
+        elif event.type == "StasisEnd":
+            await self._on_stasis_end(event)
 
-            handler = await make_next(mw, handler)
+        elif event.type == "ChannelDtmfReceived":
+            await self._on_dtmf(event)
 
-        await handler(event)
-
-    async def _handle_event(self, event: VoxtraEvent) -> None:
-        """Core event handler — routes calls and pushes events to sessions."""
-        if event.type == EventType.CALL_STARTED:
-            assert isinstance(event, CallStartedEvent)
-            session = await self._create_session(event)
-
-            # Resolve the handler for this call
-            handler = await self.router.resolve(
-                extension=event.callee_id,
-                number=event.caller_id,
-                call_info={
-                    "caller_id": event.caller_id,
-                    "callee_id": event.callee_id,
-                    "direction": event.direction,
-                },
-            )
-
-            # Run the handler in a background task
-            asyncio.create_task(self._run_handler(handler, session))
-
-        elif event.type == EventType.CALL_ENDED:
-            await self._destroy_session(event.session_id)
+        elif event.type in ("ChannelHangupRequest", "ChannelDestroyed"):
+            await self._on_channel_hangup(event)
 
         else:
-            # Push event to the relevant session
-            session = self._sessions.get(event.session_id)
-            if session:
-                await session.push_event(event)
+            logger.debug("Unhandled ARI event: %s", event.type)
 
-    async def _run_handler(self, handler: CallHandler, session: CallSession) -> None:
+    async def _on_stasis_start(self, event: ARIEvent) -> None:
+        """Handle a new call entering the Stasis app."""
+        if event.channel is None:
+            return
+
+        channel_id = event.channel.id
+        caller_id = event.channel.caller_number
+        called_number = event.channel.dialplan_exten
+
+        # Skip if this is an external media channel we created
+        if channel_id in self._sessions:
+            return
+
+        # Find handler
+        handler = self._resolve_handler(called_number, caller_id)
+        if handler is None:
+            logger.warning(
+                "No handler for call: caller=%s exten=%s — hanging up",
+                caller_id, called_number,
+            )
+            if self._ari:
+                await self._ari.hangup_channel(channel_id)
+            return
+
+        # Create session
+        session = CallSession(
+            channel_id=channel_id,
+            caller_id=caller_id,
+            called_number=called_number,
+            direction=CallDirection.INBOUND,
+            ari=self._ari,
+            app_name=self.app_name,
+        )
+        self._sessions[session.id] = session
+
+        logger.info(
+            "New call: channel=%s caller=%s exten=%s",
+            channel_id, caller_id, called_number,
+        )
+
+        # Run handler in a background task
+        asyncio.create_task(self._run_handler(handler, session))
+
+    async def _on_stasis_end(self, event: ARIEvent) -> None:
+        """Handle a call leaving the Stasis app."""
+        if event.channel is None:
+            return
+
+        channel_id = event.channel.id
+        session = self._sessions.get(channel_id)
+        if session:
+            session.state = "completed"
+            await session.push_event(VoxtraEvent(
+                type=EventType.CALL_ENDED,
+                session_id=channel_id,
+                data={"reason": "stasis_end"},
+            ))
+            self._sessions.pop(channel_id, None)
+            logger.info("Call ended: channel=%s", channel_id)
+
+    async def _on_dtmf(self, event: ARIEvent) -> None:
+        """Handle a DTMF digit received on a channel."""
+        if event.channel is None:
+            return
+
+        channel_id = event.channel.id
+        session = self._sessions.get(channel_id)
+        if session:
+            await session.push_event(VoxtraEvent(
+                type=EventType.DTMF_RECEIVED,
+                session_id=channel_id,
+                data={"digit": event.digit},
+            ))
+
+    async def _on_channel_hangup(self, event: ARIEvent) -> None:
+        """Handle a channel hangup/destroy."""
+        if event.channel is None:
+            return
+
+        channel_id = event.channel.id
+        session = self._sessions.get(channel_id)
+        if session:
+            session.state = "completed"
+            await session.push_event(VoxtraEvent(
+                type=EventType.CALL_ENDED,
+                session_id=channel_id,
+                data={"reason": event.cause_txt or event.type},
+            ))
+            await session._cleanup()
+            self._sessions.pop(channel_id, None)
+            logger.info("Channel hangup: channel=%s reason=%s", channel_id, event.cause_txt)
+
+    async def _run_handler(self, handler: OnCallHandler, session: CallSession) -> None:
         """Execute a call handler with error handling."""
         try:
             await handler(session)
         except Exception:
             logger.exception("Error in call handler for session %s", session.id)
         finally:
+            # Ensure cleanup even if handler didn't hang up
             if session.id in self._sessions:
-                await self._destroy_session(session.id)
+                try:
+                    await session.hangup()
+                except Exception:
+                    pass
+                self._sessions.pop(session.id, None)
 
     # ------------------------------------------------------------------
     # Application lifecycle
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        """Start the Voxtra application (async version)."""
-        logger.info("Starting Voxtra application '%s'", self.config.app_name)
+        """Start the Voxtra application (async version).
 
-        # Resolve components
-        await self._resolve_components()
+        Connects to ARI and begins listening for Stasis events.
+        This method blocks until the application is stopped.
+        """
+        log_level = logging.DEBUG if self.debug else logging.INFO
+        logging.basicConfig(
+            level=log_level,
+            format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        )
+
+        logger.info(
+            "Starting Voxtra app '%s' → %s",
+            self.app_name, self.ari_url,
+        )
+
+        # Create and connect ARI client
+        self._ari = ARIClient(
+            base_url=self.ari_url,
+            username=self.ari_user,
+            password=self.ari_password,
+            app_name=self.app_name,
+            reconnect_interval=self._reconnect_interval,
+        )
+        await self._ari.connect()
 
         # Run startup hooks
         for hook in self._on_startup:
@@ -362,14 +419,27 @@ class VoxtraApp:
 
         self._running = True
 
-        # Connect telephony adapter and start listening
-        if self._telephony is not None:
-            await self._telephony.connect()
-            await self._telephony.listen(callback=self._dispatch_event)
+        logger.info(
+            "Voxtra app '%s' ready — listening for calls",
+            self.app_name,
+        )
+
+        # Main event loop — listen for ARI events
+        try:
+            async for event in self._ari.events():
+                if not self._running:
+                    break
+                try:
+                    await self._handle_ari_event(event)
+                except Exception:
+                    logger.exception("Error handling ARI event: %s", event.type)
+        except Exception:
+            if self._running:
+                logger.exception("ARI event stream error")
 
     async def stop(self) -> None:
         """Stop the Voxtra application gracefully."""
-        logger.info("Stopping Voxtra application '%s'", self.config.app_name)
+        logger.info("Stopping Voxtra app '%s'", self.app_name)
         self._running = False
 
         # Hang up all active calls
@@ -378,34 +448,39 @@ class VoxtraApp:
                 await session.hangup()
             except Exception:
                 logger.warning("Failed to hang up session %s", session.id)
+        self._sessions.clear()
 
-        # Disconnect telephony
-        if self._telephony is not None:
-            await self._telephony.disconnect()
+        # Close ARI connection
+        if self._ari is not None:
+            await self._ari.close()
+            self._ari = None
 
         # Run shutdown hooks
         for hook in self._on_shutdown:
-            await hook()
+            try:
+                await hook()
+            except Exception:
+                logger.exception("Error in shutdown hook")
 
-        logger.info("Voxtra application stopped")
+        logger.info("Voxtra app '%s' stopped", self.app_name)
 
     def run(self) -> None:
         """Run the Voxtra application (blocking).
 
         Sets up signal handlers for graceful shutdown and runs
-        the async event loop.
+        the async event loop. Use this for standalone applications.
         """
-        logging.basicConfig(
-            level=logging.DEBUG if self.config.server.debug else logging.INFO,
-            format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-        )
-
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
         # Graceful shutdown on SIGINT / SIGTERM
         for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, lambda: asyncio.ensure_future(self.stop()))
+            try:
+                loop.add_signal_handler(
+                    sig, lambda: asyncio.ensure_future(self.stop())
+                )
+            except NotImplementedError:
+                pass  # Windows
 
         try:
             loop.run_until_complete(self.start())
@@ -414,14 +489,34 @@ class VoxtraApp:
         finally:
             loop.close()
 
+    async def run_async(self) -> None:
+        """Run the application within an existing async event loop.
+
+        Use this when integrating Voxtra into a larger async application
+        (e.g., a FastAPI server)::
+
+            import asyncio
+            from voxtra import VoxtraApp
+
+            app = VoxtraApp(...)
+
+            async def main():
+                await app.run_async()
+
+            asyncio.run(main())
+        """
+        await self.start()
+
     # ------------------------------------------------------------------
     # Introspection
     # ------------------------------------------------------------------
 
     @property
-    def active_sessions(self) -> dict[str, CallSession]:
-        """Return all currently active call sessions."""
-        return dict(self._sessions)
+    def ari(self) -> ARIClient:
+        """Access the underlying ARI client (for advanced use)."""
+        if self._ari is None:
+            raise RuntimeError("Not connected")
+        return self._ari
 
     @property
     def is_running(self) -> bool:

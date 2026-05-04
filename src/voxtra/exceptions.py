@@ -57,3 +57,11 @@ class SessionError(VoxtraError):
 
 class PipelineError(VoxtraError):
     """Raised when the voice pipeline encounters an error."""
+
+
+class ProvisioningError(VoxtraError):
+    """Raised when tenant provisioning fails."""
+
+
+class AudioSocketError(MediaError):
+    """Raised when AudioSocket connection or I/O fails."""
