@@ -16,7 +16,7 @@ Quick start::
         ari_password="secret",
     )
 
-    @app.on_call
+    @app.default()
     async def handle(call):
         await call.answer()
         await call.play_file("hello-world")
@@ -25,7 +25,7 @@ Quick start::
     app.run()
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from voxtra.app import VoxtraApp
 from voxtra.ari.client import ARIClient
