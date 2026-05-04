@@ -247,29 +247,65 @@ class ARIClient:
         endpoint: str,
         *,
         app: str | None = None,
+        context: str | None = None,
+        extension: str | None = None,
+        priority: int | None = None,
         caller_id: str = "",
         timeout: int = 30,
         variables: dict[str, str] | None = None,
+        channel_id: str | None = None,
     ) -> Channel:
         """Originate (create) an outbound call.
 
+        Two routing modes are supported, mirroring ARI's ``/channels`` API:
+
+        * **Stasis routing** (default): pass ``app=`` (or rely on the
+          client's ``app_name``). The call enters a Stasis app on
+          answer, bypassing the dialplan.
+        * **Dialplan routing**: pass ``context=``, ``extension=``, and
+          (optionally) ``priority=``. The call runs through the
+          dialplan as if it had arrived via a SIP trunk. Use this when
+          you want existing dialplan logic (channel-var inspection,
+          DIDs, hooks) to fire on the new call.
+
+        Set ``app=None`` *and* ``context=`` together to force dialplan
+        mode even if the client has a default ``app_name``.
+
         Args:
-            endpoint: SIP endpoint (e.g. "PJSIP/+265123456789@trunk-endpoint").
-            app: Stasis app name (defaults to self.app_name).
+            endpoint: SIP endpoint (e.g. ``"PJSIP/+265123456789@trunk"``).
+            app: Stasis app name. Defaults to ``self.app_name`` only when
+                no dialplan routing fields are set.
+            context: Dialplan context. Mutually exclusive with ``app``.
+            extension: Dialplan extension (default ``"s"`` when context set).
+            priority: Dialplan priority (default ``1`` when context set).
             caller_id: Caller ID string.
             timeout: Ring timeout in seconds.
-            variables: Channel variables to set.
+            variables: Channel variables to set before dial.
+            channel_id: Optional fixed channel ID; auto-generated if None.
 
         Returns:
             The newly created Channel.
         """
+        dialplan_mode = context is not None
         params: dict[str, Any] = {
             "endpoint": endpoint,
-            "app": app or self.app_name,
             "timeout": timeout,
         }
+        if dialplan_mode:
+            params["context"] = context
+            params["extension"] = extension or "s"
+            params["priority"] = priority if priority is not None else 1
+            if app is not None:
+                # Caller explicitly opted into both — pass through;
+                # Asterisk will run dialplan and the app post-answer.
+                params["app"] = app
+        else:
+            params["app"] = app or self.app_name
+
         if caller_id:
             params["callerId"] = caller_id
+        if channel_id:
+            params["channelId"] = channel_id
         if variables:
             params["variables"] = json.dumps({"variables": variables})
 
