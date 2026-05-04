@@ -23,9 +23,6 @@ from typing import Any
 from voxtra.ari.client import ARIClient
 from voxtra.ari.events import ARIEvent
 from voxtra.events import (
-    CallEndedEvent,
-    CallStartedEvent,
-    DTMFEvent,
     EventType,
     VoxtraEvent,
 )

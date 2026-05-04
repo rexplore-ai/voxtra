@@ -5,8 +5,6 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from voxtra.provisioning.provisioner import TenantConfig, TenantProvisioner
 from voxtra.types import SIPTrunk
 

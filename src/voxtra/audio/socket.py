@@ -34,7 +34,6 @@ import asyncio
 import logging
 import struct
 from collections.abc import AsyncIterator
-from typing import Any
 
 from voxtra.types import AudioChunk, AudioCodec
 
@@ -253,7 +252,7 @@ class AudioSocketServer:
         try:
             conn = await asyncio.wait_for(self._pending.get(), timeout=timeout)
             return conn
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise TimeoutError(
                 f"No AudioSocket connection received within {timeout}s"
             )

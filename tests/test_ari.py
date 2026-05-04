@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voxtra.ari.events import ARIEvent, parse_ari_event
+from voxtra.ari.events import parse_ari_event
 from voxtra.ari.models import Bridge, Channel, Playback
 
 

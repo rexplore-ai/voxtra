@@ -6,7 +6,7 @@ Provides:
 - SSH deployment helper: Push config to Asterisk servers
 """
 
-from voxtra.provisioning.provisioner import TenantProvisioner, TenantConfig
+from voxtra.provisioning.provisioner import TenantConfig, TenantProvisioner
 
 __all__ = [
     "TenantProvisioner",

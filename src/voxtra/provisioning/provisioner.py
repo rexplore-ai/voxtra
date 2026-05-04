@@ -14,7 +14,6 @@ Fragment Pattern" from the Voxtra architecture docs.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import secrets
 import string
@@ -186,39 +185,39 @@ class TenantProvisioner:
 
         lines = [
             f"; Voxtra SIP trunk for tenant: {tenant.tenant_name}",
-            f"; Auto-generated — do not edit manually",
-            f"",
-            f"; --- Transport ---",
-            f"",
-            f"; --- Auth ---",
+            "; Auto-generated — do not edit manually",
+            "",
+            "; --- Transport ---",
+            "",
+            "; --- Auth ---",
             f"[{endpoint_name}-auth]",
-            f"type = auth",
-            f"auth_type = userpass",
+            "type = auth",
+            "auth_type = userpass",
             f"username = {trunk.username}",
             f"password = {trunk.password}",
             f"realm = {trunk.realm}",
-            f"",
-            f"; --- AOR ---",
+            "",
+            "; --- AOR ---",
             f"[{endpoint_name}-aor]",
-            f"type = aor",
+            "type = aor",
             f"contact = sip:{trunk.host}:{trunk.port}",
-            f"qualify_frequency = 60",
-            f"",
-            f"; --- Endpoint ---",
+            "qualify_frequency = 60",
+            "",
+            "; --- Endpoint ---",
             f"[{endpoint_name}]",
-            f"type = endpoint",
+            "type = endpoint",
             f"transport = transport-{trunk.transport}",
             f"context = {tenant.context}",
-            f"disallow = all",
+            "disallow = all",
             f"allow = {codecs}",
             f"outbound_auth = {endpoint_name}-auth",
             f"aors = {endpoint_name}-aor",
             f"from_user = {trunk.username}",
             f"from_domain = {trunk.host}",
-            f"direct_media = no",
-            f"rtp_symmetric = yes",
-            f"force_rport = yes",
-            f"rewrite_contact = yes",
+            "direct_media = no",
+            "rtp_symmetric = yes",
+            "force_rport = yes",
+            "rewrite_contact = yes",
         ]
 
         if trunk.did:
@@ -226,25 +225,25 @@ class TenantProvisioner:
 
         if tenant.max_channels > 0:
             lines.extend([
-                f"",
+                "",
                 f"device_state_busy_at = {tenant.max_channels}",
             ])
 
         lines.extend([
-            f"",
-            f"; --- Registration ---",
+            "",
+            "; --- Registration ---",
             f"[{endpoint_name}-reg]",
-            f"type = registration",
+            "type = registration",
             f"transport = transport-{trunk.transport}",
             f"outbound_auth = {endpoint_name}-auth",
             f"server_uri = sip:{trunk.host}:{trunk.port}",
             f"client_uri = sip:{trunk.username}@{trunk.host}:{trunk.port}",
-            f"retry_interval = 60",
-            f"expiration = 3600",
-            f"",
-            f"; --- Identify (match inbound by IP) ---",
+            "retry_interval = 60",
+            "expiration = 3600",
+            "",
+            "; --- Identify (match inbound by IP) ---",
             f"[{endpoint_name}-identify]",
-            f"type = identify",
+            "type = identify",
             f"endpoint = {endpoint_name}",
             f"match = {trunk.host}",
         ])
@@ -258,48 +257,48 @@ class TenantProvisioner:
 
         lines = [
             f"; Voxtra dialplan for tenant: {tenant.tenant_name}",
-            f"; Auto-generated — do not edit manually",
-            f"",
+            "; Auto-generated — do not edit manually",
+            "",
             f"[{tenant.context}]",
-            f"; Inbound calls route to Stasis app",
+            "; Inbound calls route to Stasis app",
             f"exten => _X.,1,NoOp(Voxtra inbound for tenant {slug})",
             f" same => n,Stasis({tenant.ari_app_name})",
-            f" same => n,Hangup()",
+            " same => n,Hangup()",
         ]
 
         # Add specific DID routing if configured
         for did in tenant.dids:
             clean_did = did.replace("+", "")
             lines.extend([
-                f"",
+                "",
                 f"exten => {clean_did},1,NoOp(Voxtra DID {did} for tenant {slug})",
                 f" same => n,Stasis({tenant.ari_app_name})",
-                f" same => n,Hangup()",
+                " same => n,Hangup()",
             ])
 
         # Agent queue context for human handoff
         lines.extend([
-            f"",
-            f"; Agent queue context for human handoff",
+            "",
+            "; Agent queue context for human handoff",
             f"[voxtra-{slug}-queues]",
             f"exten => _X.,1,NoOp(Voxtra queue handoff for {slug})",
-            f" same => n,Queue(${{EXTEN}})",
-            f" same => n,Hangup()",
+            " same => n,Queue(${EXTEN})",
+            " same => n,Hangup()",
         ])
 
         # Outbound context
         if tenant.sip_trunk is not None:
             lines.extend([
-                f"",
-                f"; Outbound calls via trunk",
+                "",
+                "; Outbound calls via trunk",
                 f"[voxtra-{slug}-outbound]",
                 f"exten => _+X.,1,NoOp(Voxtra outbound for {slug})",
                 f" same => n,Dial(PJSIP/${{EXTEN}}@{endpoint_name},30)",
-                f" same => n,Hangup()",
-                f"",
+                " same => n,Hangup()",
+                "",
                 f"exten => _X.,1,NoOp(Voxtra outbound for {slug})",
                 f" same => n,Dial(PJSIP/${{EXTEN}}@{endpoint_name},30)",
-                f" same => n,Hangup()",
+                " same => n,Hangup()",
             ])
 
         return "\n".join(lines) + "\n"

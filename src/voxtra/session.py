@@ -25,7 +25,7 @@ from voxtra.events import (
     EventType,
     VoxtraEvent,
 )
-from voxtra.types import AudioChunk, AudioCodec, CallDirection, CallState
+from voxtra.types import AudioChunk, CallDirection, CallState
 
 if TYPE_CHECKING:
     from voxtra.ari.client import ARIClient
@@ -308,7 +308,7 @@ class CallSession:
                 if digit == "#":
                     break  # # terminates input
                 digits += digit
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 break
 
         return digits
