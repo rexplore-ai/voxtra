@@ -5,6 +5,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from voxtra.provisioning.provisioner import TenantConfig, TenantProvisioner
 from voxtra.types import SIPTrunk
 
@@ -155,3 +157,55 @@ class TestTenantProvisioner:
             # Verify files removed
             for filename in files:
                 assert not (Path(tmpdir) / filename).exists()
+
+
+class TestReloadAsterisk:
+    """Tests for TenantProvisioner.reload_asterisk()."""
+
+    @pytest.mark.asyncio
+    async def test_reloads_default_modules(self) -> None:
+        provisioner = TenantProvisioner()
+
+        called: list[str] = []
+
+        class FakeARI:
+            async def reload_module(self, module: str) -> None:
+                called.append(module)
+
+        succeeded = await provisioner.reload_asterisk(FakeARI())  # type: ignore[arg-type]
+
+        assert succeeded == list(TenantProvisioner.DEFAULT_RELOAD_MODULES)
+        assert called == list(TenantProvisioner.DEFAULT_RELOAD_MODULES)
+
+    @pytest.mark.asyncio
+    async def test_reload_accepts_explicit_modules(self) -> None:
+        provisioner = TenantProvisioner()
+        called: list[str] = []
+
+        class FakeARI:
+            async def reload_module(self, module: str) -> None:
+                called.append(module)
+
+        succeeded = await provisioner.reload_asterisk(
+            FakeARI(),  # type: ignore[arg-type]
+            modules=["res_pjsip.so"],
+        )
+
+        assert succeeded == ["res_pjsip.so"]
+        assert called == ["res_pjsip.so"]
+
+    @pytest.mark.asyncio
+    async def test_reload_swallows_per_module_failures(self) -> None:
+        provisioner = TenantProvisioner()
+
+        class FakeARI:
+            async def reload_module(self, module: str) -> None:
+                if module == "res_pjsip.so":
+                    raise RuntimeError("module failed")
+
+        succeeded = await provisioner.reload_asterisk(FakeARI())  # type: ignore[arg-type]
+
+        assert "res_pjsip.so" not in succeeded
+        # The other defaults still ran.
+        assert "pbx_config.so" in succeeded
+        assert "res_ari.so" in succeeded

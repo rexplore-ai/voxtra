@@ -25,14 +25,22 @@ Quick start::
     app.run()
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 from voxtra.app import VoxtraApp
 from voxtra.ari.client import ARIClient
 from voxtra.audio.socket import AudioSocketServer
 from voxtra.events import EventType, VoxtraEvent
+from voxtra.recording import (
+    CompositeSink,
+    LocalFileSink,
+    RecordingMetadata,
+    RecordingSink,
+    WebhookSink,
+)
 from voxtra.session import CallSession
 from voxtra.types import AudioChunk, SIPTrunk
+from voxtra.webhooks import BackendWebhook
 
 __all__ = [
     "VoxtraApp",
@@ -43,4 +51,10 @@ __all__ = [
     "SIPTrunk",
     "VoxtraEvent",
     "EventType",
+    "BackendWebhook",
+    "RecordingSink",
+    "RecordingMetadata",
+    "LocalFileSink",
+    "WebhookSink",
+    "CompositeSink",
 ]

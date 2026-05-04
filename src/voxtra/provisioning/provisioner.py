@@ -18,11 +18,14 @@ import logging
 import secrets
 import string
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
 from voxtra.types import SIPTrunk
+
+if TYPE_CHECKING:
+    from voxtra.ari.client import ARIClient
 
 logger = logging.getLogger("voxtra.provisioning")
 
@@ -83,8 +86,9 @@ class TenantProvisioner:
         # Write to disk
         provisioner.write_files(files)
 
-        # Reload Asterisk
-        provisioner.reload_asterisk()
+        # Reload Asterisk so the new configs take effect (requires a
+        # connected ARIClient — typically the one your VoxtraApp owns).
+        await provisioner.reload_asterisk(app.ari)
     """
 
     def __init__(
@@ -155,6 +159,50 @@ class TenantProvisioner:
                 logger.info("Removed config: %s", path)
 
         return removed
+
+    # ------------------------------------------------------------------
+    # Live reload
+    # ------------------------------------------------------------------
+
+    DEFAULT_RELOAD_MODULES = (
+        "res_pjsip.so",       # PJSIP endpoints / auth / aor / identify
+        "pbx_config.so",      # extensions.conf dialplan
+        "res_ari.so",         # ARI users
+    )
+
+    async def reload_asterisk(
+        self,
+        ari: ARIClient,
+        modules: tuple[str, ...] | list[str] | None = None,
+    ) -> list[str]:
+        """Reload Asterisk so newly-written tenant configs take effect.
+
+        Issues ``PUT /ari/asterisk/modules/{module}`` for each module
+        whose config was touched. By default reloads the three modules
+        we provision into: PJSIP, the dialplan, and ARI users.
+
+        Args:
+            ari: A connected :class:`~voxtra.ari.client.ARIClient`.
+            modules: Optional override list. Defaults to
+                :attr:`DEFAULT_RELOAD_MODULES`.
+
+        Returns:
+            The list of modules that reloaded successfully. Modules that
+            failed to reload are logged at WARNING and omitted from the
+            return value — provisioning never raises into the caller.
+        """
+        targets = tuple(modules) if modules is not None else self.DEFAULT_RELOAD_MODULES
+        succeeded: list[str] = []
+        for module in targets:
+            try:
+                await ari.reload_module(module)
+                succeeded.append(module)
+                logger.info("Reloaded Asterisk module: %s", module)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to reload Asterisk module %s: %s", module, exc,
+                )
+        return succeeded
 
     # ------------------------------------------------------------------
     # Config renderers

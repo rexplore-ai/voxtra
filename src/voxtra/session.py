@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from voxtra.ari.client import ARIClient
     from voxtra.audio.socket import AudioSocketConnection, AudioSocketServer
     from voxtra.core.pipeline import VoicePipeline
+    from voxtra.recording.sinks import RecordingSink
 
 logger = logging.getLogger("voxtra.session")
 
@@ -88,6 +89,11 @@ class CallSession:
         self._audio_conn: AudioSocketConnection | None = None
         self._bridge_id: str | None = None
         self._recording_name: str | None = None
+        self._recording_format: str = "wav"
+        self._recording_started_at: float | None = None
+        self._recording_sink: RecordingSink | None = None
+        # Default sink set by VoxtraApp when one is configured app-wide.
+        self._default_recording_sink: RecordingSink | None = None
 
         # Event queue for streaming events to the handler
         self._event_queue: asyncio.Queue[VoxtraEvent] = asyncio.Queue()
@@ -493,12 +499,21 @@ class CallSession:
     # Recording
     # ------------------------------------------------------------------
 
-    async def record_start(self, name: str = "", fmt: str = "wav") -> str:
+    async def record_start(
+        self,
+        name: str = "",
+        fmt: str = "wav",
+        *,
+        sink: RecordingSink | None = None,
+    ) -> str:
         """Start recording the call.
 
         Args:
             name: Recording name. Auto-generated if empty.
             fmt: Audio format (wav, gsm, etc.).
+            sink: Optional :class:`~voxtra.recording.RecordingSink` to
+                fire on stop. Falls back to the app-level default sink
+                set via ``VoxtraApp(recording_sink=...)``.
 
         Returns:
             The recording name (for retrieval later).
@@ -511,11 +526,18 @@ class CallSession:
 
         await self._ari.record_channel(self.id, name, fmt=fmt)
         self._recording_name = name
+        self._recording_format = fmt
+        self._recording_started_at = time.monotonic()
+        self._recording_sink = sink or self._default_recording_sink
         logger.info("Session %s: recording started (%s)", self.id, name)
         return name
 
     async def record_stop(self) -> str | None:
         """Stop the current recording.
+
+        Fires the configured :class:`RecordingSink` (if any) with the
+        completed recording's metadata. Sink errors are caught and
+        logged — they never propagate into the call flow.
 
         Returns:
             The recording name, or None if not recording.
@@ -526,9 +548,35 @@ class CallSession:
             raise RuntimeError("No ARI client configured")
 
         name = self._recording_name
+        fmt = self._recording_format
+        started = self._recording_started_at
+        sink = self._recording_sink
+
         await self._ari.stop_recording(name)
         self._recording_name = None
+        self._recording_started_at = None
+        self._recording_sink = None
         logger.info("Session %s: recording stopped (%s)", self.id, name)
+
+        if sink is not None:
+            from voxtra.recording.sinks import RecordingMetadata
+
+            duration = (time.monotonic() - started) if started is not None else None
+            metadata = RecordingMetadata(
+                session_id=self.id,
+                name=name,
+                file_path=f"/var/spool/asterisk/recording/{name}.{fmt}",
+                duration_seconds=duration,
+                format=fmt,
+            )
+            try:
+                await sink.on_recording_complete(metadata)
+            except Exception:
+                logger.exception(
+                    "Recording sink failed for session %s recording %s",
+                    self.id, name,
+                )
+
         return name
 
     # ------------------------------------------------------------------

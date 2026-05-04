@@ -36,12 +36,14 @@ from voxtra.events import (
 )
 from voxtra.exceptions import RouteNotFoundError
 from voxtra.media.session_transport import CallSessionMediaTransport
+from voxtra.recording.sinks import RecordingSink
 from voxtra.registry import registry
 from voxtra.router import Router
 from voxtra.session import CallSession
 from voxtra.telephony.asterisk import AsteriskAdapter
 from voxtra.telephony.base import BaseTelephonyAdapter
 from voxtra.types import CallDirection
+from voxtra.webhooks import BackendWebhook
 
 logger = logging.getLogger("voxtra")
 
@@ -114,6 +116,8 @@ class VoxtraApp:
         llm: BaseAgent | None = None,
         tts: BaseTTS | None = None,
         vad: BaseVAD | None = None,
+        webhook: BackendWebhook | None = None,
+        recording_sink: RecordingSink | None = None,
     ) -> None:
         # ARI connection parameters (support env vars as fallback)
         self.ari_url = ari_url or os.environ.get("VOXTRA_ARI_URL", "http://localhost:8088")
@@ -144,6 +148,16 @@ class VoxtraApp:
 
         # Routing — single source of truth for call dispatch
         self.router: Router = router or Router()
+
+        # Optional backend webhook emitter. When set, every dispatched
+        # VoxtraEvent is forwarded as a fire-and-forget HTTP POST. Failures
+        # never propagate into the call pipeline.
+        self._webhook: BackendWebhook | None = webhook
+
+        # Optional default recording sink. Propagated onto every
+        # CallSession; handlers can override per-call by passing
+        # `sink=` to record_start.
+        self._recording_sink: RecordingSink | None = recording_sink
 
         # Active sessions keyed by channel ID
         self._sessions: dict[str, CallSession] = {}
@@ -188,12 +202,22 @@ class VoxtraApp:
         construct them yourself and pass to :class:`VoxtraApp` directly,
         or build them post-construction. This avoids forcing every
         provider package to be importable just to load a config.
+
+        If ``config.backend.webhook.url`` is set, a :class:`BackendWebhook`
+        is constructed automatically.
         """
         adapter = cls._build_adapter_from_config(config)
+        webhook: BackendWebhook | None = None
+        webhook_cfg = (
+            config.backend.webhook if config.backend is not None else None
+        )
+        if webhook_cfg is not None and webhook_cfg.url:
+            webhook = BackendWebhook(webhook_cfg)
         return cls(
             telephony=adapter,
             app_name=config.app_name,
             debug=config.server.debug,
+            webhook=webhook,
         )
 
     @classmethod
@@ -372,6 +396,7 @@ class VoxtraApp:
             ari=self._ari,
             app_name=self.app_name,
         )
+        session._default_recording_sink = self._recording_sink
         self._sessions[session.id] = session
 
         logger.info(
@@ -397,6 +422,17 @@ class VoxtraApp:
     # ------------------------------------------------------------------
     # ARI event handling
     # ------------------------------------------------------------------
+
+    def _emit_webhook(self, event: VoxtraEvent) -> None:
+        """Fire-and-forget webhook delivery.
+
+        Schedules the POST as a background task so the call pipeline
+        never blocks on the receiver. Errors are swallowed inside the
+        emitter and logged at WARNING.
+        """
+        if self._webhook is None:
+            return
+        asyncio.create_task(self._webhook.emit(event))
 
     def _maybe_start_pipeline(self, session: CallSession) -> None:
         """Auto-wire :class:`VoicePipeline` to a session if STT/LLM/TTS configured.
@@ -475,6 +511,8 @@ class VoxtraApp:
         keeps working). Non-Asterisk backends create CallSessions
         without an ARIClient — only adapter-level methods are usable.
         """
+        self._emit_webhook(event)
+
         if event.type == EventType.CALL_STARTED:
             session_id = event.session_id
             if session_id in self._sessions:
@@ -507,6 +545,7 @@ class VoxtraApp:
             )
             if route_metadata:
                 session.metadata.update(route_metadata)
+            session._default_recording_sink = self._recording_sink
             self._sessions[session.id] = session
             self._maybe_start_pipeline(session)
             asyncio.create_task(self._run_handler(handler, session))
@@ -556,6 +595,7 @@ class VoxtraApp:
         )
         if route_metadata:
             session.metadata.update(route_metadata)
+        session._default_recording_sink = self._recording_sink
         self._sessions[session.id] = session
 
         # Auto-wire AI pipeline if configured (no-op otherwise).
@@ -565,6 +605,16 @@ class VoxtraApp:
             "New call: channel=%s caller=%s exten=%s",
             channel_id, caller_id, called_number,
         )
+
+        self._emit_webhook(VoxtraEvent(
+            type=EventType.CALL_STARTED,
+            session_id=channel_id,
+            data={
+                "caller_id": caller_id,
+                "called_number": called_number,
+                "direction": "inbound",
+            },
+        ))
 
         # Run handler in a background task
         asyncio.create_task(self._run_handler(handler, session))
@@ -578,11 +628,13 @@ class VoxtraApp:
         session = self._sessions.get(channel_id)
         if session:
             session.state = "completed"
-            await session.push_event(VoxtraEvent(
+            ended = VoxtraEvent(
                 type=EventType.CALL_ENDED,
                 session_id=channel_id,
                 data={"reason": "stasis_end"},
-            ))
+            )
+            await session.push_event(ended)
+            self._emit_webhook(ended)
             self._sessions.pop(channel_id, None)
             logger.info("Call ended: channel=%s", channel_id)
 
@@ -594,11 +646,13 @@ class VoxtraApp:
         channel_id = event.channel.id
         session = self._sessions.get(channel_id)
         if session:
-            await session.push_event(VoxtraEvent(
+            dtmf = VoxtraEvent(
                 type=EventType.DTMF_RECEIVED,
                 session_id=channel_id,
                 data={"digit": event.digit},
-            ))
+            )
+            await session.push_event(dtmf)
+            self._emit_webhook(dtmf)
 
     async def _on_channel_hangup(self, event: ARIEvent) -> None:
         """Handle a channel hangup/destroy."""
@@ -609,11 +663,13 @@ class VoxtraApp:
         session = self._sessions.get(channel_id)
         if session:
             session.state = "completed"
-            await session.push_event(VoxtraEvent(
+            ended = VoxtraEvent(
                 type=EventType.CALL_ENDED,
                 session_id=channel_id,
                 data={"reason": event.cause_txt or event.type},
-            ))
+            )
+            await session.push_event(ended)
+            self._emit_webhook(ended)
             await session._cleanup()
             self._sessions.pop(channel_id, None)
             logger.info("Channel hangup: channel=%s reason=%s", channel_id, event.cause_txt)
@@ -714,6 +770,14 @@ class VoxtraApp:
             except Exception:
                 logger.exception("Error disconnecting telephony adapter")
         self._ari = None
+
+        # Release the webhook HTTP client (only owned ones — passing your
+        # own httpx.AsyncClient keeps it alive).
+        if self._webhook is not None:
+            try:
+                await self._webhook.aclose()
+            except Exception:
+                logger.exception("Error closing webhook emitter")
 
         # Run shutdown hooks
         for hook in self._on_shutdown:

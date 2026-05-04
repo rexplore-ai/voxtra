@@ -163,6 +163,40 @@ class ServerConfig(BaseModel):
     debug: bool = False
 
 
+# ---------------------------------------------------------------------------
+# Backend integration (webhooks)
+# ---------------------------------------------------------------------------
+
+class WebhookConfig(BaseModel):
+    """Configuration for the :class:`~voxtra.webhooks.BackendWebhook` emitter.
+
+    Attributes:
+        url: Receiving endpoint (e.g. ``https://api.luso8.com/webhooks/voxtra``).
+            Empty string disables emission entirely.
+        signing_secret: Optional shared secret. When set, every request
+            includes ``X-Voxtra-Signature`` containing
+            ``hmac_sha256(secret, body)`` so the receiver can verify origin.
+        events: Allowlist of event types (e.g. ``["call.started", "call.ended"]``).
+            Empty list means emit *all* events.
+        timeout_seconds: Per-request HTTP timeout.
+        max_retries: Number of retry attempts for transport errors / 5xx.
+        retry_backoff: Initial backoff in seconds; doubles each retry.
+    """
+
+    url: str = ""
+    signing_secret: str = ""
+    events: list[str] = Field(default_factory=list)
+    timeout_seconds: float = 10.0
+    max_retries: int = 3
+    retry_backoff: float = 1.0
+
+
+class BackendConfig(BaseModel):
+    """Configuration for downstream backend integration."""
+
+    webhook: WebhookConfig | None = None
+
+
 class VoxtraConfig(BaseModel):
     """Root configuration model for a Voxtra application.
 
@@ -176,6 +210,7 @@ class VoxtraConfig(BaseModel):
     ai: AIConfig = Field(default_factory=AIConfig)
     routes: list[RouteConfig] = Field(default_factory=list)
     server: ServerConfig = Field(default_factory=ServerConfig)
+    backend: BackendConfig = Field(default_factory=BackendConfig)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> VoxtraConfig:

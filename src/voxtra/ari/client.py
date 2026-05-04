@@ -462,6 +462,30 @@ class ARIClient:
         await self._post(f"/ari/recordings/live/{recording_name}/stop")
 
     # ------------------------------------------------------------------
+    # Module / config management
+    # ------------------------------------------------------------------
+
+    async def reload_module(self, module_name: str) -> None:
+        """Reload an Asterisk module via ARI.
+
+        Uses ``PUT /ari/asterisk/modules/{module}`` which performs an
+        in-place reload — equivalent to ``module reload <name>`` on the
+        Asterisk CLI but without shelling out.
+
+        Common modules to reload after provisioning a tenant:
+
+        * ``res_pjsip.so`` — picks up new endpoint/auth/aor/identify
+          fragments included from ``pjsip.conf``.
+        * ``pbx_config.so`` — picks up new dialplan contexts from
+          ``extensions.conf`` includes.
+        """
+        await self._put(f"/ari/asterisk/modules/{module_name}")
+
+    async def list_modules(self) -> list[dict[str, Any]]:
+        """List all loaded Asterisk modules."""
+        return await self._get("/ari/asterisk/modules")
+
+    # ------------------------------------------------------------------
     # HTTP helpers
     # ------------------------------------------------------------------
 
@@ -489,6 +513,20 @@ class ARIClient:
         except httpx.HTTPStatusError as exc:
             raise TelephonyError(
                 f"ARI POST {path} failed: {exc.response.status_code} {exc.response.text}"
+            ) from exc
+
+    async def _put(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        if self._http is None:
+            raise TelephonyError("ARI client not connected")
+        try:
+            resp = await self._http.put(path, params=params)
+            resp.raise_for_status()
+            if resp.content:
+                return resp.json()
+            return {}
+        except httpx.HTTPStatusError as exc:
+            raise TelephonyError(
+                f"ARI PUT {path} failed: {exc.response.status_code} {exc.response.text}"
             ) from exc
 
     async def _delete(self, path: str, params: dict[str, Any] | None = None) -> None:

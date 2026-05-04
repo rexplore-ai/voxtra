@@ -5,6 +5,25 @@ All notable changes to Voxtra will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-05-05
+
+This release closes the three remaining roadmap items needed for clean
+integration with downstream consumers: webhook-based event emission,
+pluggable recording sinks, and live Asterisk reload.
+
+### Added
+- **`BackendWebhook`** (`voxtra.webhooks.BackendWebhook`) — fire-and-forget HTTP emitter that POSTs every `VoxtraEvent` to a configured URL. Supports HMAC-SHA256 signing via `signing_secret`, per-event-type filtering via `events`, and exponential-backoff retries on 5xx / transport errors. 4xx responses are not retried. New `WebhookConfig` and `BackendConfig` types in `voxtra.config`. `VoxtraApp(webhook=...)` constructor parameter; `VoxtraApp.from_config()` auto-builds the emitter when `config.backend.webhook.url` is set. Webhook delivery is best-effort and never raises into the call pipeline.
+- **`RecordingSink` abstraction** (`voxtra.recording`) — pluggable destinations for finished call recordings. New `RecordingSink` ABC with a single `on_recording_complete(metadata)` method. Concrete sinks: `LocalFileSink` (default no-op), `WebhookSink` (POST recording metadata to a URL with optional HMAC signing), and `CompositeSink` (fan-out to multiple sinks with per-sink error isolation). `VoxtraApp(recording_sink=...)` propagates a default to every session; `session.record_start(sink=...)` overrides per-call. `RecordingMetadata` dataclass carries `session_id`, `name`, `file_path`, `duration_seconds`, and `format`.
+- **`ARIClient.reload_module(name)`** — issues `PUT /ari/asterisk/modules/{module}` for live config reload. New `ARIClient.list_modules()` for introspection.
+- **Real `TenantProvisioner.reload_asterisk(ari)`** — reloads `res_pjsip.so`, `pbx_config.so`, and `res_ari.so` (the three modules whose configs the provisioner touches) via ARI. Per-module failures are logged and skipped rather than raising — partial reloads are valid.
+
+### Changed
+- **`CallSession._default_recording_sink`** — populated by `VoxtraApp` when `recording_sink=` is configured. `record_start` falls back to this when no per-call sink is provided.
+- **Webhook events emitted from ARI dispatch path** — `_on_stasis_start`, `_on_stasis_end`, `_on_dtmf`, and `_on_channel_hangup` now also fire the webhook in addition to the session queue, mirroring the behaviour of the non-Asterisk `_handle_voxtra_event` path.
+
+### Tests
+- 199 tests (was 179). New: `tests/test_webhooks.py` (10 tests), `tests/test_recording.py` (7 tests). Expanded: `tests/test_provisioning.py` (3 new reload tests).
+
 ## [0.3.0] - 2026-05-04
 
 This release wires the previously-disconnected abstractions into the public API
