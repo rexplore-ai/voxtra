@@ -33,11 +33,13 @@ graph LR
 
 | Layer | Package | Responsibility |
 |-------|---------|---------------|
-| **Core** | `voxtra.app`, `voxtra.router`, `voxtra.session` | App lifecycle, routing, call sessions |
-| **Telephony** | `voxtra.telephony` | Asterisk ARI, LiveKit, FreeSWITCH adapters |
-| **Media** | `voxtra.media` | Audio frames, WebSocket/RTP transport, codecs |
-| **AI** | `voxtra.ai` | STT, TTS, LLM, VAD provider abstractions |
-| **Pipeline** | `voxtra.core.pipeline` | Real-time STT → LLM → TTS orchestration |
+| **Core** | `voxtra.app`, `voxtra.router`, `voxtra.session` | App lifecycle, decorator-based routing, call sessions with `say` / `listen` / `agent` |
+| **Telephony** | `voxtra.telephony`, `voxtra.ari` | `BaseTelephonyAdapter` ABC; `AsteriskAdapter` wraps the async `ARIClient` |
+| **Audio** | `voxtra.audio` | `AudioSocketServer` — TCP audio I/O with Asterisk; μ-law / A-law / PCM codec helpers |
+| **Media** | `voxtra.media` | `AudioFrame` + `BaseMediaTransport`; `CallSessionMediaTransport` bridges sessions into the pipeline |
+| **AI** | `voxtra.ai` | STT, TTS, LLM, VAD provider abstractions; `Registry` plugin system |
+| **Pipeline** | `voxtra.core.pipeline` | Real-time STT → LLM → TTS orchestration; auto-wired per session when providers configured |
+| **Provisioning** | `voxtra.provisioning` | Per-tenant Asterisk pjsip / dialplan generation (optional, `voxtra[provisioning]`) |
 
 ## Quick Start
 
@@ -49,11 +51,15 @@ graph LR
 pip install voxtra
 ```
 
-With provider extras:
+With provider extras (Asterisk is part of the core install — no extra needed):
 
 ```bash
-pip install voxtra[asterisk,deepgram,openai,elevenlabs]
+pip install "voxtra[deepgram,openai,elevenlabs,cartesia]"
+# or grab everything in one go
+pip install "voxtra[all]"
 ```
+
+Available extras: `deepgram`, `openai`, `elevenlabs`, `cartesia`, `livekit`, `provisioning`, `all`, `dev`.
 
 **From GitHub (latest development version):**
 
@@ -137,13 +143,20 @@ voxtra start
 
 ## Asterisk Integration
 
-Voxtra connects to Asterisk via **ARI (Asterisk REST Interface)**. Add this to your Asterisk dialplan:
+Voxtra connects to Asterisk on two channels:
+
+- **ARI (Asterisk REST Interface)** — control plane. HTTP for call operations, WebSocket for events.
+- **AudioSocket** — media plane. A simple framed TCP protocol (1-byte type + 3-byte length + payload). Voxtra's `AudioSocketServer` accepts the connection Asterisk opens; no RTP/NAT/SDP to worry about.
+
+Add this to your dialplan to route inbound calls into the Voxtra Stasis app:
 
 ```ini
 [voxtra-inbound]
 exten => _X.,1,Stasis(voxtra)
  same => n,Hangup()
 ```
+
+Voxtra opens AudioSocket connections on demand the first time a handler calls `session.audio_stream()`, `session.say()`, `session.listen()`, or any other audio I/O.
 
 ## Supported Providers
 
@@ -162,36 +175,49 @@ exten => _X.,1,Stasis(voxtra)
 
 ### Text-to-Speech
 - **ElevenLabs** (streaming)
+- **Cartesia** (streaming)
 - More coming soon
 
 ## Project Structure
 
 ```
 src/voxtra/
-├── app.py                  # VoxtraApp — main entry point
-├── session.py              # CallSession — per-call handle
-├── router.py               # Decorator-based call routing
-├── events.py               # Event system
-├── config.py               # Pydantic config models
-├── middleware.py            # Event middleware
-├── exceptions.py           # Custom exceptions
-├── types.py                # Shared types
+├── app.py                       # VoxtraApp — entry point, lifecycle, from_yaml/from_config
+├── session.py                   # CallSession + AgentClient (say/listen/agent)
+├── router.py                    # Decorator-based call routing
+├── registry.py                  # Provider plugin registry (STT/TTS/LLM/VAD/telephony/media)
+├── events.py                    # VoxtraEvent + typed subclasses
+├── config.py                    # Pydantic config models + VoxtraConfig.from_yaml
+├── middleware.py                # Event middleware
+├── exceptions.py                # Custom exceptions
+├── types.py                     # AudioChunk, CallState, AudioCodec, SIPTrunk, …
+├── cli.py                       # `voxtra` CLI: start, init, info, check
+├── ari/                         # Asterisk ARI client
+│   ├── client.py                #   async HTTP + WebSocket client
+│   ├── events.py                #   ARIEvent typed model
+│   └── models.py                #   Channel / Bridge / Playback Pydantic models
+├── audio/                       # AudioSocket — TCP audio I/O with Asterisk
+│   ├── socket.py                #   AudioSocketServer + AudioSocketConnection
+│   └── codec.py                 #   μ-law / A-law / PCM-S16LE conversion
+├── telephony/                   # Backend abstraction
+│   ├── base.py                  #   BaseTelephonyAdapter ABC
+│   ├── asterisk/adapter.py      #   AsteriskAdapter (wraps ARIClient)
+│   └── livekit/                 #   LiveKit adapter (stub)
+├── media/                       # Frame-oriented media stack used by VoicePipeline
+│   ├── audio.py                 #   AudioFrame + codec helpers
+│   ├── base.py                  #   BaseMediaTransport ABC
+│   ├── websocket.py             #   WebSocket transport
+│   ├── buffer.py                #   Audio buffering
+│   └── session_transport.py     #   Bridges CallSession ↔ BaseMediaTransport
 ├── core/
-│   └── pipeline.py         # STT → LLM → TTS pipeline
-├── telephony/
-│   ├── base.py             # TelephonyAdapter ABC
-│   ├── asterisk/           # Asterisk ARI adapter
-│   └── livekit/            # LiveKit adapter (stub)
-├── media/
-│   ├── audio.py            # AudioFrame, codec conversion
-│   ├── base.py             # MediaTransport ABC
-│   ├── websocket.py        # WebSocket transport
-│   └── buffer.py           # Audio buffering
+│   └── pipeline.py              # VoicePipeline — STT → LLM → TTS orchestration
+├── provisioning/                # Per-tenant Asterisk config generation (optional)
+│   └── provisioner.py           #   pjsip / extensions / ari fragment writer
 └── ai/
-    ├── stt/                # Speech-to-Text providers
-    ├── tts/                # Text-to-Speech providers
-    ├── llm/                # LLM / Agent providers
-    └── vad/                # Voice Activity Detection
+    ├── stt/                     # Speech-to-Text providers (Deepgram, …)
+    ├── tts/                     # Text-to-Speech providers (ElevenLabs, Cartesia, …)
+    ├── llm/                     # LLM / Agent providers (OpenAI, …)
+    └── vad/                     # Voice Activity Detection
 ```
 
 ## Documentation
@@ -211,14 +237,28 @@ pytest
 
 ## Roadmap
 
+Shipped in **0.3.0**:
+
 - [x] Core abstractions (VoxtraApp, Router, CallSession, Events)
-- [x] Asterisk ARI adapter
-- [x] AI provider interfaces (STT, TTS, LLM, VAD)
+- [x] Asterisk ARI adapter (wraps async `ARIClient`, conforms to `BaseTelephonyAdapter`)
+- [x] AudioSocket TCP transport + μ-law / A-law / PCM codec helpers
+- [x] AI provider interfaces (STT, TTS, LLM, VAD) + `Registry` plugin system
+- [x] Voice pipeline (STT → LLM → TTS), **auto-wired per session** when providers configured
+- [x] High-level session API: `say(text)`, `listen(timeout=)`, `agent.respond(text)`
+- [x] `VoxtraApp.from_yaml(path)` / `from_config(VoxtraConfig)` + working `voxtra start` CLI
 - [x] WebSocket media transport
-- [x] Voice pipeline (STT → LLM → TTS)
-- [ ] End-to-end Asterisk + AI demo
-- [ ] LiveKit adapter
+- [x] Per-tenant Asterisk provisioning (config file generation)
+
+Planned:
+
+- [ ] End-to-end Asterisk + AI demo with recordings
+- [ ] LiveKit adapter (currently a stub)
 - [ ] FreeSWITCH adapter
+- [ ] HMAC-signed backend webhook emitter
+- [ ] Recording sinks (GCS / S3) — auto-upload after `record_stop()`
+- [ ] Multi-tenant runtime supervisor (one ARI app per tenant)
+- [ ] Provisioner stage 2: SSH + `asterisk -rx reload`
+- [ ] Prometheus metrics ASGI sub-app
 - [ ] LangGraph agent integration
 - [ ] Multi-agent handoff
 - [ ] Dashboard / Admin API
