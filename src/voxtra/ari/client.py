@@ -306,10 +306,17 @@ class ARIClient:
             params["callerId"] = caller_id
         if channel_id:
             params["channelId"] = channel_id
-        if variables:
-            params["variables"] = json.dumps({"variables": variables})
 
-        data = await self._post("/ari/channels", params=params)
+        # Channel variables go in the request *body*, not the query
+        # string. ARI's POST /channels expects {"variables": {"K": "V"}}
+        # at the body root. Sending them as a query parameter is silently
+        # ignored by Asterisk, which is how channel-variable propagation
+        # broke in 0.3.x — see CHANGELOG.
+        body: dict[str, Any] | None = None
+        if variables:
+            body = {"variables": dict(variables)}
+
+        data = await self._post("/ari/channels", params=params, json=body)
         return Channel.from_ari(data)
 
     async def redirect_channel(self, channel_id: str, endpoint: str) -> None:
@@ -537,11 +544,16 @@ class ARIClient:
                 f"ARI GET {path} failed: {exc.response.status_code} {exc.response.text}"
             ) from exc
 
-    async def _post(self, path: str, params: dict[str, Any] | None = None) -> Any:
+    async def _post(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        json: Any = None,
+    ) -> Any:
         if self._http is None:
             raise TelephonyError("ARI client not connected")
         try:
-            resp = await self._http.post(path, params=params)
+            resp = await self._http.post(path, params=params, json=json)
             resp.raise_for_status()
             if resp.content:
                 return resp.json()

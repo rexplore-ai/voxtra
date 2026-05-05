@@ -5,6 +5,13 @@ All notable changes to Voxtra will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-05-05
+
+### Fixed
+- **`ARIClient.originate()` channel variables are silently dropped.** Variables were serialized as a URL query parameter (`?variables=…`) and double-wrapped (`{"variables": {...}}`). Per the ARI spec, `variables` is a body parameter; sending it as a query string is silently ignored by Asterisk, which in turn meant *every* channel variable passed via `variables=` since 0.3.0 never made it onto the channel. The dialplan saw no `LUSO8_*` / app-specific variables and could not route or annotate calls, breaking outbound AI-agent flows for downstream consumers.
+- **Fix**: `_post()` now accepts a `json=` body, and `originate()` sends `{"variables": {...}}` in the request body with a single wrap. URL query params no longer carry the variables key.
+- **Regression test** in `tests/test_ari_originate.py::test_originate_variables_go_in_body` asserts the body shape and that `variables` does not leak into the query string.
+
 ## [0.3.1] - 2026-05-05
 
 This release closes the three remaining roadmap items needed for clean
