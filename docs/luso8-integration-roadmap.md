@@ -26,7 +26,10 @@ LiveKit path keeps working during the migration.
 Agreed decisions that shape this plan:
 
 - Deliver the architecture and roadmap first, with no infra or code changes.
-- Run the Voxtra worker on GKE.
+- Use Voxtra as a telephony adapter only. The AI agent implementation (STT, LLM,
+  TTS, knowledge base, tools, and agent logic) stays in the luso8 ai-engine, and
+  no new code lands in the Voxtra repo for now.
+- Run the luso8 Asterisk worker (which uses the Voxtra adapter) on GKE.
 - Assume a carrier SIP trunk is available to configure.
 
 ---
@@ -90,33 +93,36 @@ flowchart TD
   subgraph Media [Telephony core]
     A[Asterisk media nodes: PJSIP, MixMonitor, queues, Stasis voxtra]
   end
-  subgraph VoxtraLayer [Voxtra on GKE]
-    V[Voxtra workers: ARI Stasis app, AI pipeline, session manager, unified API, drivers]
+  subgraph VoxtraLayer [luso8 ai-engine Asterisk worker on GKE]
+    V[Voxtra adapter for ARI + audio, plus the luso8 STT/LLM/TTS, KB, and tools]
   end
-  subgraph Apps [Luso8]
-    B[Backend + ai-engine: KB, MCP tools, agent config, CRM/GTM, dialer, call center]
+  subgraph Apps [Luso8 core]
+    B[Backend: agent config, CRM/GTM, dialer, call center]
   end
   C1 --> K
   C2 --> K
   C3 --> K
   K --> A
-  A -- ARI WS + AudioSocket --> V
+  A -- ARI WS + AudioSocket via Voxtra adapter --> V
   V -- internal API --> B
 ```
 
 Principles:
 
-- **Voxtra fronts both transports.** Asterisk is the live driver. LiveKit,
-  Twilio, and Telnyx sit behind the same `BaseTelephonyAdapter`, so the backend
-  asks for a call and Voxtra picks the transport. LiveKit and Asterisk coexist
-  during migration, so this is not a hard cutover.
-- **The Voxtra worker is the missing runtime piece.** The dialplan already hands
-  inbound calls to `Stasis(voxtra)`, but no Voxtra worker is connected to that
-  ARI app yet (AI voice runs on LiveKit today). Deploying that worker is what
-  makes AI voice on Asterisk real.
-- **The backend stays the brain.** Voxtra calls into luso8 (knowledge-base
-  search, MCP tools, voice-agent config) over the internal API, reusing what the
-  LiveKit voice worker already uses.
+- **Voxtra is an adapter, not where the AI lives.** For now Voxtra is consumed as
+  a library for one job: Asterisk telephony and media transport (ARI control plus
+  the audio stream). The STT, LLM, TTS, knowledge base, MCP tools, and agent
+  logic all stay in the luso8 ai-engine, exactly as they run today. No features
+  are built into the Voxtra repo for now.
+- **The missing runtime piece is a luso8 Asterisk worker.** The dialplan already
+  hands inbound calls to `Stasis(voxtra)`, but nothing is connected to that ARI
+  app yet. The piece to build is a luso8 ai-engine worker that connects to
+  Asterisk through the Voxtra adapter and runs the existing luso8 voice pipeline,
+  the same `config_loader`, knowledge-base search, and tools the LiveKit worker
+  uses. It swaps the transport (LiveKit to Asterisk), not the brain.
+- **Voxtra fronts the transports.** Asterisk is the live driver; LiveKit stays
+  for the browser leg and during migration. The backend asks for a call and the
+  adapter layer picks the transport, so this is not a hard cutover.
 
 ### Browser-based human calling and where LiveKit fits
 
@@ -179,19 +185,24 @@ These are the points where the pieces connect, and what each owns:
 - Configure a real carrier trunk: set `luso8-pbx-sip-trunk-host`, `-user`,
   `-pass`, and `outbound-caller-id`, then reload PJSIP (`reload-config.sh`).
   Confirm `pjsip show registrations` is Registered.
-- Deploy the Voxtra Stasis worker on GKE, in a cluster or node pool near the PBX
-  region (see media locality in Risks). It connects to Asterisk ARI over the
-  WebSocket, runs the AI pipeline, and registers the `voxtra` Stasis app. Env
-  from a new k8s secret mapped from `luso8-pbx-ari-*` plus the AI keys.
-- Wire Voxtra to luso8: a thin adapter so the pipeline pulls agent config, KB
-  search, and MCP tools from the internal API.
+- Deploy a luso8 ai-engine Asterisk worker on GKE, in a cluster or node pool near
+  the PBX region (see media locality in Risks). It uses the Voxtra adapter to
+  connect to Asterisk ARI over the WebSocket, register the `voxtra` Stasis app,
+  and pull the call audio. It runs the existing luso8 voice pipeline (STT, LLM,
+  TTS), not any pipeline inside Voxtra. Env from a new k8s secret mapped from
+  `luso8-pbx-ari-*` plus the AI keys.
+- Reuse the luso8 AI brain: the worker shares the LiveKit worker's
+  `config_loader`, knowledge-base search, MCP tools, and agent config. Only the
+  transport changes, Asterisk through the Voxtra adapter instead of LiveKit.
 - Open the network path: ARI 8088 and AudioSocket/RTP between the worker and the
   PBX.
 - Verify end to end: inbound (carrier to Asterisk to `Stasis(voxtra)` to AI from
   KB to recording in GCS to a CallLog with disposition) and outbound (backend
   originate to Asterisk to carrier).
-- Repos: `voxtra` (worker entrypoint + luso8 adapter), `luso8.backend`
-  (provider config and selection), `infrastructure` (k8s + firewall).
+- Repos: `luso8.ai.engine` (the Asterisk worker that consumes the Voxtra adapter
+  and reuses the voice pipeline), `luso8.backend` (provider config and
+  selection), `infrastructure` (k8s + firewall). Voxtra is consumed as a library
+  dependency at its current version; no changes land in the Voxtra repo.
   `luso8-telephony-core` already supports the trunk template.
 
 ### Phase 2: Unify the backend telephony layer behind Voxtra
