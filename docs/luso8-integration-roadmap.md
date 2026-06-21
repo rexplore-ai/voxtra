@@ -6,7 +6,7 @@ voice stack, with Voxtra as the abstraction layer:
 - **Voxtra** (this repo): a Python voice-abstraction library with a production
   Asterisk ARI adapter and a full STT, LLM, TTS pipeline.
 - **luso8-telephony-core**: a fork of Asterisk deployed as the PBX on GCP.
-- **kamailio** (`rexplore-ai/kamailio`): a fork intended as the SIP edge for
+- **kamailio** (`rexplore-ai/luso8-kamailio`): a fork intended as the SIP edge for
   heavy scale.
 
 It is an architecture and roadmap only. It proposes no code or infra change by
@@ -172,7 +172,7 @@ These are the points where the pieces connect, and what each owns:
   `asterisk.py` webhooks), `luso8.ai.engine` (`telephony_service`).
 
 ### Phase 3: Kamailio SIP edge for scale (telecom-grade)
-The fork `rexplore-ai/kamailio` is currently vanilla upstream: no Luso8 config,
+The fork `rexplore-ai/luso8-kamailio` is currently vanilla upstream: no Luso8 config,
 Docker, or CI yet, but every module the edge needs is already in the source
 (`dispatcher`, `registrar` plus `usrloc`, `tls`, `rtpengine`, `permissions`,
 `topos`, `dialog`, `htable`, `auth_db`). Phase 3 adds the Luso8 layer on top,
@@ -206,7 +206,7 @@ mirroring how `luso8-telephony-core` wrapped Asterisk.
 - **When to do it.** Only once concurrency or multi-node HA demands it. The
   single Asterisk node from Phases 1 and 2 serves the earlier stages directly,
   so Kamailio is not on the critical path until scale requires it.
-- Repos: `rexplore-ai/kamailio` (Luso8 config, Docker, CI), `luso8-telephony-core`
+- Repos: `rexplore-ai/luso8-kamailio` (Luso8 config, Docker, CI), `luso8-telephony-core`
   (multi-node), `infrastructure`.
 
 ---
