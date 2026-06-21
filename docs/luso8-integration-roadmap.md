@@ -118,6 +118,39 @@ Principles:
   search, MCP tools, voice-agent config) over the internal API, reusing what the
   LiveKit voice worker already uses.
 
+### Browser-based human calling and where LiveKit fits
+
+Human agents place outbound calls, and listen in or jump into calls, from the
+Luso8 browser app, so a WebRTC path is a first-class requirement, not an edge
+case. A browser cannot speak SIP or RTP directly, so it needs WebRTC to reach
+the media core. This is the one job that Voxtra plus Asterisk does not cover out
+of the box today, and it is why LiveKit is still in the picture.
+
+Options, in order of effort:
+
+- **Near term: keep LiveKit for the browser leg only.** Move AI and PSTN calls
+  to Asterisk plus Voxtra, and keep LiveKit as the WebRTC SFU for the agent's
+  browser (outbound human dialing, listen-in, jump-in, take-over). Voxtra
+  abstracts both transports, so nothing browser-side has to change yet. Lowest
+  effort.
+- **Target: the browser talks to Asterisk over WebRTC.** Run a JavaScript SIP
+  client (SIP.js or JsSIP) in the Luso8 frontend that registers to Asterisk over
+  secure WebSocket (WSS) with DTLS-SRTP, using `chan_pjsip` WebRTC support plus
+  `rtpengine`. Asterisk becomes the single media core for AI, PSTN, and human
+  browser agents, and LiveKit can be retired. More work, and a latency and audio
+  quality risk to validate before cutover.
+- **At scale: Kamailio terminates WebRTC.** Kamailio plus `rtpengine` act as the
+  WebRTC-to-SIP gateway in front of the Asterisk nodes (the `rtpengine` module is
+  already in the fork), so browser agents and carriers enter through the same
+  edge.
+
+Integration shape for browser outbound calling on the target path: the agent's
+browser softphone registers to the edge (Asterisk, or Kamailio at scale) over
+WSS; the Luso8 backend, through Voxtra, originates the call and bridges the agent
+leg to the carrier leg on Asterisk; the same WebRTC session carries listen-in and
+jump-in. Until that is built, the LiveKit path keeps these features working, so
+this is a later migration, not a blocker for Phases 1 and 2.
+
 ---
 
 ## 4. Integration seams
