@@ -166,11 +166,13 @@ These are the points where the pieces connect, and what each owns:
 1. **Origination.** Backend to Voxtra to Asterisk ARI (today
    `voxtra_client.originate`), or backend to LiveKit. Voxtra unifies both behind
    one request.
-2. **Inbound handling.** Asterisk `Stasis(voxtra)` to a Voxtra worker that runs
-   the AI pipeline. This is new runtime to deploy.
-3. **AI grounding.** Voxtra to the ai-engine/backend internal API for
-   voice-agent config, knowledge-base search, and MCP tools (mirror the LiveKit
-   worker's `config_loader` and tool path).
+2. **Inbound handling.** Asterisk `Stasis(voxtra)` to the luso8 ai-engine
+   Asterisk worker, which uses the Voxtra adapter for ARI and audio. This is the
+   new runtime to deploy.
+3. **AI brain (in luso8).** The Asterisk worker runs the existing luso8 voice
+   pipeline in process, reusing the LiveKit worker's `config_loader`,
+   knowledge-base search, and MCP tools. The AI is not in Voxtra; Voxtra only
+   carries telephony and audio.
 4. **Events and lifecycle.** Asterisk and LiveKit events normalize into the
    existing `CallSession` and `CallLog`, and `terminate_call`.
 5. **Recording.** Asterisk MixMonitor to GCS (already wired); surfaced through
@@ -273,7 +275,7 @@ The PBX reads these GSM secrets at container start (`pull-secrets.sh` to
 | `luso8-pbx-recordings-bucket` | GCS recordings bucket | set |
 | `luso8-livekit-sip-uri` | LiveKit SIP gateway (existing path) | set |
 
-The Voxtra worker on GKE needs: the ARI URL plus `luso8-pbx-ari-username` and
+The luso8 Asterisk worker on GKE needs: the ARI URL plus `luso8-pbx-ari-username` and
 `-password`, the AI keys (`OPENAI_API_KEY`, `DEEPGRAM_API_KEY`,
 `ELEVENLABS_API_KEY`), and the internal API key to reach the ai-engine/backend.
 
@@ -299,7 +301,7 @@ allowlist, TLS cert references, and the rtpengine address.
 
 - **Media locality (most important).** The PBX is in africa-south1 and the main
   GKE cluster is in us-central1. Real-time RTP and AudioSocket across regions add
-  large latency. Run the Voxtra worker in a cluster or node pool in the PBX
+  large latency. Run the luso8 Asterisk worker in a cluster or node pool in the PBX
   region (africa-south1), or co-locate media. Decide this before Phase 1 build.
 - **Carrier trunk** values are placeholders today; PSTN through Asterisk is
   blocked until they are set.
