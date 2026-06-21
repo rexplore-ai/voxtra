@@ -172,12 +172,41 @@ These are the points where the pieces connect, and what each owns:
   `asterisk.py` webhooks), `luso8.ai.engine` (`telephony_service`).
 
 ### Phase 3: Kamailio SIP edge for scale (telecom-grade)
-- Deploy the Kamailio fork as the SIP front: registrar, dispatcher and load
-  balancer across N Asterisk media nodes, carrier interconnect, failover, TLS
-  and SRTP, and rate or fraud controls.
-- Asterisk nodes become stateless media workers behind Kamailio; Voxtra workers
-  scale horizontally on GKE; multi-tenant routing by DID and SIP domain.
-- Repos: `rexplore-ai/kamailio` (config + deploy), `luso8-telephony-core`
+The fork `rexplore-ai/kamailio` is currently vanilla upstream: no Luso8 config,
+Docker, or CI yet, but every module the edge needs is already in the source
+(`dispatcher`, `registrar` plus `usrloc`, `tls`, `rtpengine`, `permissions`,
+`topos`, `dialog`, `htable`, `auth_db`). Phase 3 adds the Luso8 layer on top,
+mirroring how `luso8-telephony-core` wrapped Asterisk.
+
+- **Role split.** Kamailio is the SIP edge and does stateless signaling: it
+  terminates carrier and client SIP, authenticates and rate-limits, hides
+  topology, and load-balances INVITEs across the Asterisk media nodes. Asterisk
+  keeps media, IVR, queues, recording, and the `Stasis(voxtra)` handoff. Voxtra
+  workers run on GKE behind the Asterisk ARI.
+- **Modules and their role here.**
+  - `dispatcher`: spread calls across N Asterisk nodes with health probes and
+    failover.
+  - `registrar` plus `usrloc`: SIP registration for agent softphones and clients.
+  - `permissions`: allow only known carrier and node IPs (address table).
+  - `tls`: TLS for SIP signaling, paired with SRTP via `rtpengine`.
+  - `rtpengine`: media relay and NAT traversal (run the rtpengine daemon
+    alongside Kamailio).
+  - `topos` plus `dialog`: topology hiding and dialog state for clean BYE and
+    REFER.
+  - `htable` plus `auth_db`: per-tenant routing data and credentials.
+- **Build and deploy (mirror the Asterisk fork).** Add a templated
+  `etc/kamailio.cfg` whose placeholders are filled at container start from GSM
+  via `envsubst`, a Dockerfile, and a CI workflow that builds to Artifact
+  Registry and deploys to a GCE VM or a GKE workload. New GSM secrets
+  `luso8-kamailio-*`: the dispatcher target list (Asterisk node IPs), the carrier
+  IP allowlist, TLS cert references, and the rtpengine address.
+- **Routing.** Multi-tenant by DID and SIP domain: an inbound DID maps to a
+  tenant context, then dispatches to an Asterisk node; outbound from Asterisk
+  egresses through Kamailio to the carrier.
+- **When to do it.** Only once concurrency or multi-node HA demands it. The
+  single Asterisk node from Phases 1 and 2 serves the earlier stages directly,
+  so Kamailio is not on the critical path until scale requires it.
+- Repos: `rexplore-ai/kamailio` (Luso8 config, Docker, CI), `luso8-telephony-core`
   (multi-node), `infrastructure`.
 
 ---
@@ -203,6 +232,10 @@ The PBX reads these GSM secrets at container start (`pull-secrets.sh` to
 The Voxtra worker on GKE needs: the ARI URL plus `luso8-pbx-ari-username` and
 `-password`, the AI keys (`OPENAI_API_KEY`, `DEEPGRAM_API_KEY`,
 `ELEVENLABS_API_KEY`), and the internal API key to reach the ai-engine/backend.
+
+Phase 3 adds `luso8-kamailio-*` secrets following the same GSM plus `envsubst`
+pattern: the dispatcher target list (Asterisk node IPs), the carrier IP
+allowlist, TLS cert references, and the rtpengine address.
 
 ---
 
